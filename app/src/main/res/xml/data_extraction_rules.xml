@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+	<cloud-backup>
+		<include domain="file" path="garden/garden-a.save" />
+		<include domain="file" path="garden/garden-b.save" />
+	</cloud-backup>
+	<device-transfer>
+		<include domain="file" path="garden/garden-a.save" />
+		<include domain="file" path="garden/garden-b.save" />
+	</device-transfer>
+</data-extraction-rules>
