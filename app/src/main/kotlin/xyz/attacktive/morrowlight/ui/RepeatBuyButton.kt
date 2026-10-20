@@ -57,7 +57,7 @@ fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Mo
 					}
 
 					try {
-						interactionSource.emit(press)
+						interactionSource.tryEmit(press)
 
 						do {
 							val event = awaitPointerEvent(pass = PointerEventPass.Initial)
