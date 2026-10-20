@@ -342,8 +342,16 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 	var section by rememberSaveable { mutableIntStateOf(0) }
 	var amountIndex by rememberSaveable { mutableIntStateOf(0) }
 	val amount = BuyAmount.entries[amountIndex]
+	val listState = rememberLazyListState()
+	var purchasing by remember { mutableStateOf(false) }
 
-	LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+	LaunchedEffect(purchasing) {
+		if (purchasing) {
+			listState.stopScroll()
+		}
+	}
+
+	LazyColumn(state = listState, userScrollEnabled = !purchasing, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
 		item { Balance(state) }
 
 		item {
@@ -363,7 +371,10 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 				}
 			}
 
-			items(Cultivator.entries, key = { it.name }) { plant -> CultivatorCard(state, plant, amount) { onBuy(plant, amount) } }
+			items(Cultivator.entries, key = { it.name }) { plant ->
+				CultivatorCard(state, plant, amount, { onBuy(plant, amount) }) { purchasing = it }
+			}
+
 			item { Text("10 and Max plant as many as you can afford, up to the selected amount. Hold a Plant button to keep purchasing while affordable.", color = Muted, fontSize = 12.sp) }
 		} else {
 			item { Text("Make a little more of every light.", style = MaterialTheme.typography.headlineMedium) }
@@ -373,7 +384,7 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 }
 
 @Composable
-private fun CultivatorCard(state: GameState, plant: Cultivator, amount: BuyAmount, onBuy: () -> Unit) {
+private fun CultivatorCard(state: GameState, plant: Cultivator, amount: BuyAmount, onBuy: () -> Unit, onPressed: (Boolean) -> Unit) {
 	val discovered = Garden.discovered(state, plant)
 	val count = state.count(plant)
 	val quote = Garden.quote(state, plant, amount.limit)
@@ -404,7 +415,7 @@ private fun CultivatorCard(state: GameState, plant: Cultivator, amount: BuyAmoun
 				Text("All colony milestones reached", color = Gold, fontSize = 12.sp)
 			}
 
-			RepeatBuyButton(onBuy = onBuy, enabled = quote.quantity > 0, modifier = Modifier
+			RepeatBuyButton(onBuy = onBuy, enabled = quote.quantity > 0, onPressed = onPressed, modifier = Modifier
 				.fillMaxWidth()
 				.heightIn(min = 48.dp)
 			) {

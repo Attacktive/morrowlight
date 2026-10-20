@@ -21,9 +21,10 @@ import kotlinx.coroutines.flow.collectLatest
 
 /** Preserve normal click and accessibility behavior while repeating a held cultivator purchase. */
 @Composable
-fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
+fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier, onPressed: (Boolean) -> Unit = {}, content: @Composable RowScope.() -> Unit) {
 	val interactionSource = remember { MutableInteractionSource() }
 	val currentBuy by rememberUpdatedState(onBuy)
+	val currentPressed by rememberUpdatedState(onPressed)
 	var repeated by remember { mutableStateOf(false) }
 
 	LaunchedEffect(interactionSource, enabled) {
@@ -37,12 +38,18 @@ fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Mo
 			when (interaction) {
 				is PressInteraction.Press -> {
 					repeated = false
-					delay(HOLD_DELAY_MILLIS.milliseconds)
+					currentPressed(true)
 
-					while (true) {
-						repeated = true
-						currentBuy()
-						delay(REPEAT_DELAY_MILLIS.milliseconds)
+					try {
+						delay(HOLD_DELAY_MILLIS.milliseconds)
+
+						while (true) {
+							repeated = true
+							currentBuy()
+							delay(REPEAT_DELAY_MILLIS.milliseconds)
+						}
+					} finally {
+						currentPressed(false)
 					}
 				}
 
