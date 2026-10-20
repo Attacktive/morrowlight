@@ -1,0 +1,277 @@
+package xyz.attacktive.morrowlight.core
+
+import kotlin.math.floor
+import kotlin.math.pow
+import kotlin.math.sqrt
+
+const val MAX_GLOW = 1e240
+const val MAX_OWNED = 1_000
+const val MAX_SEEDS = 1_000_000_000L
+const val PRESTIGE_THRESHOLD = 1_000_000.0
+const val FIREFLY_CHARGE = 25
+
+data class Preferences(val reducedMotion: Boolean = false, val haptics: Boolean = true)
+
+data class GameState(
+	val glow: Double = 0.0,
+	val runGlow: Double = 0.0,
+	val lifetimeGlow: Double = 0.0,
+	val owned: List<Int> = List(Cultivator.entries.size) { 0 },
+	val research: Set<String> = emptySet(),
+	val milestones: Set<String> = emptySet(),
+	val dawnSeeds: Long = 0L,
+	val dawns: Int = 0,
+	val taps: Long = 0L,
+	val charge: Int = 0,
+	val lastSeenMillis: Long = 0L,
+	val preferences: Preferences = Preferences()
+) {
+	fun count(cultivator: Cultivator) = owned[cultivator.ordinal]
+}
+
+enum class Cultivator(val title: String, val description: String, val baseCost: Double, val baseRate: Double, val discovery: Double) {
+	GLOWCAP("Glowcap", "A small mushroom with a very bright idea.", 15.0, 0.25, 0.0),
+	LANTERN_LILY("Lantern lily", "Bottles the last gold of the evening.", 120.0, 2.0, 80.0),
+	FIREFLY_HAVEN("Firefly haven", "Tiny tenants. Excellent work ethic.", 900.0, 12.0, 600.0),
+	MOONWILLOW("Moonwillow", "Its silver leaves remember the moon.", 7_500.0, 80.0, 4_500.0),
+	CLOUD_LOOM("Cloud loom", "Weaves passing clouds into ribbons of light.", 65_000.0, 480.0, 40_000.0),
+	STARWELL("Starwell", "An invitation for the stars to come home.", 550_000.0, 3_000.0, 300_000.0)
+}
+
+data class Research(val id: String, val title: String, val description: String, val cost: Double, val cultivator: Cultivator? = null, val requiredCount: Int = 0, val prerequisite: String? = null)
+
+object Almanac {
+	val research: List<Research> = run {
+		val baseline = listOf(
+			Research("gentle-hands", "Gentle hands", "Double the base Glow from each touch.", 50.0),
+			Research("ember-keeper", "Ember keeper", "Quadruple base touch Glow again.", 1_250.0, prerequisite = "gentle-hands"),
+			Research("morning-dew", "Morning dew", "All cultivators produce 30% more Glow.", 800.0),
+			Research("star-charts", "Star charts", "All cultivators produce 50% more Glow.", 150_000.0, prerequisite = "morning-dew"),
+			Research("long-nights", "Long nights", "Your garden grows offline for up to 12 hours, instead of 8.", 10_000.0),
+			Research("dream-garden", "Dream garden", "Extend offline growth to a full 24 hours.", 250_000.0, prerequisite = "long-nights")
+		)
+
+		val perCultivator = Cultivator.entries.flatMap { cultivator ->
+			listOf(10 to 40.0, 25 to 250.0, 50 to 2_000.0).mapIndexed { index, (count, factor) ->
+				Research(
+					id = "${cultivator.name.lowercase()}-${index + 1}",
+					title = "${cultivator.title}: ${listOf("Awakening", "Harmony", "Radiance")[index]}",
+					description = "Double this cultivator's production.",
+					cost = cultivator.baseCost * factor,
+					cultivator = cultivator,
+					requiredCount = count,
+					prerequisite = if (index == 0) null else "${cultivator.name.lowercase()}-$index"
+				)
+			}
+		}
+
+		baseline + perCultivator
+	}
+
+	val researchById = research.associateBy { it.id }
+
+	val milestones = listOf(
+		Milestone("first-light", "First light", "Gather your first Glow.") { it.lifetimeGlow >= 1.0 },
+		Milestone("roots", "Putting down roots", "Plant a Glowcap.") { it.count(Cultivator.GLOWCAP) > 0 || it.dawns > 0 },
+		Milestone("little-forest", "A little forest", "Own 25 cultivators in one garden.") { it.owned.sum() >= 25 },
+		Milestone("thousand", "A thousand little suns", "Gather 1,000 lifetime Glow.") { it.lifetimeGlow >= 1_000.0 },
+		Milestone("touch", "A gentle habit", "Touch the garden 250 times.") { it.taps >= 250 },
+		Milestone("moon", "A place for the moon", "Grow your first Moonwillow.") { it.count(Cultivator.MOONWILLOW) > 0 },
+		Milestone("stars", "The stars came home", "Build a Starwell.") { it.count(Cultivator.STARWELL) > 0 },
+		Milestone("dawn", "Begin again, brighter", "Restore your first dawn.") { it.dawns >= 1 },
+		Milestone("ten-seeds", "Keeper of mornings", "Collect 10 permanent Dawn Seeds.") { it.dawnSeeds >= 10 },
+		Milestone("billion", "A sky of your own", "Gather one billion lifetime Glow.") { it.lifetimeGlow >= 1e9 }
+	)
+}
+
+data class Milestone(val id: String, val title: String, val description: String, val earned: (GameState) -> Boolean)
+
+data class Quote(val quantity: Int, val cost: Double)
+
+data class OfflineGrowth(val state: GameState, val earned: Double, val seconds: Long, val capped: Boolean)
+
+enum class BuyAmount(val limit: Int, val label: String) {
+	ONE(1, "1"), TEN(10, "10"), MAX(MAX_OWNED, "Max")
+}
+
+/** Pure, deterministic rules. Android clocks, rendering, and storage live outside this object. */
+object Garden {
+	fun seedMultiplier(state: GameState) = 1.0 + state.dawnSeeds * 0.15
+
+	fun colonyMultiplier(count: Int) = 2.0.pow(listOf(10, 25, 50, 100).count { count >= it })
+
+	fun nextColonyMilestone(count: Int) = listOf(10, 25, 50, 100).firstOrNull { it > count }
+
+	fun production(state: GameState, cultivator: Cultivator): Double {
+		val researchCount = Almanac.research.count {
+			it.cultivator == cultivator && it.id in state.research
+		}
+
+		val researchMultiplier = 2.0.pow(researchCount)
+
+		val dew = if ("morning-dew" in state.research) 1.3 else 1.0
+		val charts = if ("star-charts" in state.research) 1.5 else 1.0
+
+		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts)
+	}
+
+	fun production(state: GameState) = bounded(Cultivator.entries.sumOf { production(state, it) })
+
+	fun tapValue(state: GameState): Double {
+		val hands = if ("gentle-hands" in state.research) 2.0 else 1.0
+		val keeper = if ("ember-keeper" in state.research) 4.0 else 1.0
+
+		return bounded(hands * keeper * seedMultiplier(state) + production(state) * 0.04)
+	}
+
+	fun tap(state: GameState): GameState {
+		val charged = state.charge + 1 >= FIREFLY_CHARGE
+		val gift = if (charged) production(state) * 15.0 else 0.0
+
+		return rememberMilestones(
+			earn(state, tapValue(state) + gift)
+				.copy(
+					taps = (state.taps + 1).coerceAtMost(Long.MAX_VALUE - 1),
+					charge = if (charged) 0 else state.charge + 1
+				)
+		)
+	}
+
+	fun tick(state: GameState, seconds: Double): GameState {
+		if (!seconds.isFinite() || seconds <= 0.0) {
+			return state
+		}
+
+		return earn(state, bounded(production(state) * seconds.coerceAtMost(86_400.0)))
+	}
+
+	fun discovered(state: GameState, cultivator: Cultivator) = state.runGlow >= cultivator.discovery || state.count(cultivator) > 0
+
+	fun nextCost(state: GameState, cultivator: Cultivator) = cultivator.baseCost * 1.15.pow(state.count(cultivator))
+
+	/** Quotes at most [amount] affordable units; the exact same quote is used by purchase. */
+	fun quote(state: GameState, cultivator: Cultivator, amount: Int): Quote {
+		if (!discovered(state, cultivator) || amount <= 0) {
+			return Quote(0, 0.0)
+		}
+
+		val limit = amount.coerceAtMost(MAX_OWNED - state.count(cultivator))
+		var count = 0
+		var total = 0.0
+
+		while (count < limit) {
+			val price = cultivator.baseCost * 1.15.pow(state.count(cultivator) + count)
+			val nextTotal = total + price
+			if (!nextTotal.isFinite() || nextTotal > state.glow) {
+				break
+			}
+
+			total = nextTotal
+			count++
+		}
+
+		return Quote(count, total)
+	}
+
+	fun buy(state: GameState, cultivator: Cultivator, amount: Int): GameState {
+		val quote = quote(state, cultivator, amount)
+		if (quote.quantity == 0) {
+			return state
+		}
+
+		val counts = state.owned.toMutableList()
+		counts[cultivator.ordinal] += quote.quantity
+
+		return rememberMilestones(state.copy(glow = (state.glow - quote.cost).coerceAtLeast(0.0), owned = counts.toList()))
+	}
+
+	fun canResearch(state: GameState, research: Research) = research.id !in state.research &&
+		(research.prerequisite == null || research.prerequisite in state.research) &&
+		(research.cultivator == null || state.count(research.cultivator) >= research.requiredCount)
+
+	fun research(state: GameState, id: String): GameState {
+		val item = Almanac.researchById[id] ?: return state
+		if (!canResearch(state, item) || state.glow < item.cost) {
+			return state
+		}
+
+		return state.copy(glow = state.glow - item.cost, research = state.research + id)
+	}
+
+	fun offlineLimitHours(state: GameState) = when {
+		"dream-garden" in state.research -> 24
+		"long-nights" in state.research -> 12
+		else -> 8
+	}
+
+	fun offline(state: GameState, nowMillis: Long): OfflineGrowth {
+		val now = nowMillis.coerceAtLeast(0L)
+		if (state.lastSeenMillis == 0L || now <= state.lastSeenMillis) {
+			return OfflineGrowth(state.copy(lastSeenMillis = maxOf(now, state.lastSeenMillis)), 0.0, 0L, false)
+		}
+
+		val elapsed = now - state.lastSeenMillis
+		val limit = offlineLimitHours(state) * 3_600_000L
+		val creditedMillis = elapsed.coerceAtMost(limit)
+		val advanced = tick(state, creditedMillis / 1_000.0).copy(lastSeenMillis = now)
+
+		return OfflineGrowth(advanced, advanced.glow - state.glow, creditedMillis / 1_000L, elapsed > limit)
+	}
+
+	fun prestigeReward(state: GameState): Long {
+		val available = MAX_SEEDS - state.dawnSeeds
+
+		return floor(sqrt(state.runGlow / PRESTIGE_THRESHOLD)).coerceAtMost(available.toDouble()).toLong()
+	}
+
+	fun nextSeedAt(state: GameState) = PRESTIGE_THRESHOLD * (prestigeReward(state) + 1.0).pow(2)
+
+	fun prestige(state: GameState): GameState {
+		val reward = prestigeReward(state)
+		if (reward == 0L) {
+			return state
+		}
+
+		return rememberMilestones(
+			GameState(
+				milestones = state.milestones,
+				lifetimeGlow = state.lifetimeGlow,
+				dawnSeeds = state.dawnSeeds + reward,
+				dawns = (state.dawns + 1).coerceAtMost(Int.MAX_VALUE - 1),
+				taps = state.taps,
+				lastSeenMillis = state.lastSeenMillis,
+				preferences = state.preferences
+			)
+		)
+	}
+
+	fun chapter(state: GameState) = when {
+		state.runGlow >= 1_000_000 -> 5
+		state.runGlow >= 300_000 -> 4
+		state.runGlow >= 40_000 -> 3
+		state.runGlow >= 4_500 -> 2
+		state.runGlow >= 80 -> 1
+		else -> 0
+	}
+
+	fun earn(state: GameState, amount: Double): GameState {
+		if (amount.isNaN() || amount <= 0.0) {
+			return state
+		}
+
+		val gain = bounded(amount)
+		return rememberMilestones(
+			state.copy(
+				glow = bounded(state.glow + gain),
+				runGlow = bounded(state.runGlow + gain),
+				lifetimeGlow = bounded(state.lifetimeGlow + gain)
+			)
+		)
+	}
+
+	private fun rememberMilestones(state: GameState) = state.copy(
+		milestones = state.milestones + Almanac.milestones.filter { it.earned(state) }.map { it.id }
+	)
+
+	private fun bounded(value: Double) = value.coerceIn(0.0, MAX_GLOW)
+}

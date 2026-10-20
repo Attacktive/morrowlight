@@ -1,0 +1,59 @@
+name: 'Release'
+
+on:
+  push:
+    tags: ['**']
+
+jobs:
+  release:
+    name: 'Release'
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 30
+    permissions:
+      contents: 'write'
+    steps:
+      - name: 'Checkout'
+        uses: 'actions/checkout@v7.0.1'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 'Set up JDK'
+        uses: 'actions/setup-java@v6.1.0'
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: 'Set up Gradle'
+        uses: 'gradle/actions/setup-gradle@v6.4.0'
+      - name: 'Set up Android SDK command-line tools'
+        uses: 'android-actions/setup-android@v4.0.4'
+        with:
+          packages: 'platform-tools'
+      - name: 'Install Android SDK packages'
+        run: |
+          command -v sdkmanager
+          sdkmanager --version
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+          test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
+      - name: 'Build release APK and AAB'
+        run: 'sh gradlew --stacktrace :app:assembleRelease :app:bundleRelease'
+      - name: 'Verify and rename release artifacts'
+        id: 'artifacts'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          test -s app/build/outputs/bundle/release/app-release.aab
+          unzip -t app/build/outputs/apk/release/app-release-unsigned.apk >/dev/null
+          unzip -t app/build/outputs/bundle/release/app-release.aab >/dev/null
+          asset_version="${RELEASE_TAG//\//-}"
+          printf 'asset_version=%s\n' "$asset_version" >> "$GITHUB_OUTPUT"
+          mv app/build/outputs/apk/release/app-release-unsigned.apk "app/build/outputs/apk/release/Morrowlight-${asset_version}.apk"
+          mv app/build/outputs/bundle/release/app-release.aab "app/build/outputs/bundle/release/Morrowlight-${asset_version}.aab"
+      - name: 'Publish GitHub Release'
+        uses: 'softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64'
+        with:
+          files: |
+            app/build/outputs/apk/release/Morrowlight-*.apk
+            app/build/outputs/bundle/release/Morrowlight-*.aab
+          fail_on_unmatched_files: true
+          generate_release_notes: true
