@@ -351,34 +351,44 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 		}
 	}
 
-	LazyColumn(state = listState, userScrollEnabled = !purchasing, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-		item { Balance(state) }
-
-		item {
-			Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-				FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Cultivators") })
-				FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("Research") })
-			}
+	Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+		Box(Modifier.padding(top = 20.dp, bottom = 14.dp)) {
+			Balance(state)
 		}
 
-		if (section == 0) {
+		LazyColumn(
+			modifier = Modifier.weight(1f),
+			state = listState,
+			userScrollEnabled = !purchasing,
+			contentPadding = PaddingValues(bottom = 20.dp),
+			verticalArrangement = Arrangement.spacedBy(14.dp)
+		) {
 			item {
-				Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-					Text("PLANT AT ONCE", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-					BuyAmount.entries.forEachIndexed { index, item ->
-						FilterChip(selected = index == amountIndex, onClick = { amountIndex = index }, label = { Text(item.label) }, modifier = Modifier.padding(start = 6.dp))
-					}
+				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+					FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Cultivators") })
+					FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("Research") })
 				}
 			}
 
-			items(Cultivator.entries, key = { it.name }) { plant ->
-				CultivatorCard(state, plant, amount, { onBuy(plant, amount) }) { purchasing = it }
-			}
+			if (section == 0) {
+				item {
+					Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+						Text("PLANT AT ONCE", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+						BuyAmount.entries.forEachIndexed { index, item ->
+							FilterChip(selected = index == amountIndex, onClick = { amountIndex = index }, label = { Text(item.label) }, modifier = Modifier.padding(start = 6.dp))
+						}
+					}
+				}
 
-			item { Text("10 and Max plant as many as you can afford, up to the selected amount. Hold a Plant button to keep purchasing while affordable.", color = Muted, fontSize = 12.sp) }
-		} else {
-			item { Text("Make a little more of every light.", style = MaterialTheme.typography.headlineMedium) }
-			items(Almanac.research.sortedBy { it.id in state.research }, key = { it.id }) { research -> ResearchCard(state, research) { onResearch(research.id) } }
+				items(Cultivator.entries, key = { it.name }) { plant ->
+					CultivatorCard(state, plant, amount, { onBuy(plant, amount) }) { purchasing = it }
+				}
+
+				item { Text("10 and Max plant as many as you can afford, up to the selected amount. Hold a Plant button to keep purchasing while affordable.", color = Muted, fontSize = 12.sp) }
+			} else {
+				item { Text("Make a little more of every light.", style = MaterialTheme.typography.headlineMedium) }
+				items(Almanac.research.sortedBy { it.id in state.research }, key = { it.id }) { research -> ResearchCard(state, research) { onResearch(research.id) } }
+			}
 		}
 	}
 }
