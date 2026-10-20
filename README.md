@@ -28,13 +28,13 @@ Requires **JDK 21**, Android SDK platform **37**, and build tools **36.0.0**. An
 Build on Linux or macOS:
 
 ```sh
-sh gradlew :core:test :app:assembleDebug :app:lintDebug
+sh gradlew :core:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
 Build on Windows:
 
 ```powershell
-.\gradlew.bat :core:test :app:assembleDebug :app:lintDebug
+.\gradlew.bat :core:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
 Install the debug APK on either platform:
@@ -50,4 +50,4 @@ The standard Gradle Wrapper launchers use the checked-in `gradle/wrapper/gradle-
 - `core`: dependency-free Kotlin game logic, saves, number formatting, and shared garden geometry.
 - `app`: native Android UI, lifecycle integration, and app state.
 
-Saves are local; Android's system backup may include them. The app has no network permission, ads, analytics, accounts, or in-app purchases.
+Saves are local; Android's system backup may include them. Checkpoint reads and writes share one ordered queue, so reopening the Activity waits for progress queued by the previous instance before loading. The app has no network permission, ads, analytics, accounts, or in-app purchases.

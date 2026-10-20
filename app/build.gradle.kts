@@ -62,4 +62,12 @@ dependencies {
 	implementation(libs.compose.preview)
 	implementation(libs.material3)
 	debugImplementation(libs.compose.tooling)
+	testImplementation(platform(libs.junit.bom))
+	testImplementation(libs.junit.jupiter)
+	testImplementation(libs.coroutines.test)
+	testRuntimeOnly(libs.junit.launcher)
+}
+
+tasks.withType<Test>().configureEach {
+	useJUnitPlatform()
 }

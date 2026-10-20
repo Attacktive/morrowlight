@@ -53,7 +53,7 @@ jobs:
           archive: false
           if-no-files-found: 'error'
       - name: 'JVM tests, release shrinker, and lint'
-        run: 'gradle --stacktrace :core:test :app:assembleRelease :app:lintDebug'
+        run: 'gradle --stacktrace :core:test :app:testDebugUnitTest :app:assembleRelease :app:lintDebug'
       - name: 'Upload reports'
         if: 'always()'
         uses: 'actions/upload-artifact@v7.0.2'
@@ -61,5 +61,6 @@ jobs:
           name: 'verification-reports'
           path: |
             core/build/reports/tests/
+            app/build/reports/tests/
             app/build/reports/lint-results-debug.*
           if-no-files-found: 'ignore'
