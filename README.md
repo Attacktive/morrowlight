@@ -43,7 +43,7 @@ Install the debug APK on either platform:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The source-only launchers download Gradle **9.7.0** and verify its pinned SHA-256. The Android GitHub Actions workflow tests, builds, and lints the app; its `Morrowlight-debug` artifact contains the debug APK. Release APKs are unsigned.
+The standard Gradle Wrapper launchers use the checked-in `gradle/wrapper/gradle-wrapper.jar` to download Gradle **9.8.1** and verify its pinned distribution SHA-256. The Android GitHub Actions workflow tests, builds, and lints the app; its `Morrowlight-debug` artifact contains the debug APK. Release APKs are unsigned.
 
 ## Project notes
 
