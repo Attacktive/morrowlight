@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.isOutOfBounds
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import kotlin.time.Duration.Companion.milliseconds
@@ -46,6 +47,7 @@ fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Mo
 					val press = PressInteraction.Press(down.position)
 					var repeated = false
 					var released = false
+					var canceled = false
 					val repeating = this@coroutineScope.launch {
 						delay(HOLD_DELAY_MILLIS.milliseconds)
 
@@ -61,16 +63,18 @@ fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Mo
 
 						do {
 							val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+							val pointer = event.changes.firstOrNull { it.id == down.id }
 							event.changes.forEach { it.consume() }
-							released = event.changes.any { it.id == down.id && !it.pressed }
-						} while (!released)
+							canceled = pointer == null || pointer.isOutOfBounds(size, extendedTouchPadding)
+							released = pointer != null && !pointer.pressed
+						} while (!released && !canceled)
 					} finally {
 						repeating.cancel()
-						interactionSource.tryEmit(if (released) PressInteraction.Release(press) else PressInteraction.Cancel(press))
+						interactionSource.tryEmit(if (released && !canceled) PressInteraction.Release(press) else PressInteraction.Cancel(press))
 						currentPressed(false)
 					}
 
-					if (!repeated) {
+					if (released && !canceled && !repeated) {
 						currentBuy()
 					}
 				}
