@@ -71,6 +71,7 @@ import xyz.attacktive.morrowlight.GardenUiState
 import xyz.attacktive.morrowlight.GardenViewModel
 import xyz.attacktive.morrowlight.core.Almanac
 import xyz.attacktive.morrowlight.core.BuyAmount
+import xyz.attacktive.morrowlight.core.Constellation
 import xyz.attacktive.morrowlight.core.Cultivator
 import xyz.attacktive.morrowlight.core.Display
 import xyz.attacktive.morrowlight.core.FIREFLY_CHARGE
@@ -89,7 +90,7 @@ fun Morrowlight(model: GardenViewModel) {
 	val ui by model.ui.collectAsStateWithLifecycle()
 
 	MorrowTheme {
-		GardenApp(ui, model::tap, model::buy, model::research, model::prestige, model::preferences, model::dismissOffline, model::dismissRecovery, model::load)
+		GardenApp(ui, model::tap, model::buy, model::research, model::prestige, model::attune, model::preferences, model::dismissOffline, model::dismissRecovery, model::load)
 	}
 }
 
@@ -100,6 +101,7 @@ private fun GardenApp(
 	onBuy: (Cultivator, BuyAmount) -> Unit,
 	onResearch: (String) -> Unit,
 	onPrestige: () -> Unit,
+	onAttune: (Constellation) -> Unit,
 	onPreferences: (Preferences) -> Unit,
 	onDismissOffline: () -> Unit,
 	onDismissRecovery: () -> Unit,
@@ -173,7 +175,7 @@ private fun GardenApp(
 						when (tab) {
 							0 -> GardenHome(state, ui.active, touch)
 							1 -> CultivateScreen(state, onBuy, onResearch)
-							2 -> DawnScreen(state) { confirmDawn = true }
+							2 -> DawnScreen(state, { confirmDawn = true }, onAttune)
 						}
 					}
 				}
@@ -277,6 +279,10 @@ private fun GardenHome(state: GameState, active: Boolean, onGather: (Boolean) ->
 			}
 		}
 
+		if (state.dawns > 0 && state.constellation == null) {
+			item { Text("A new constellation awaits in Dawn. Choose a path for this garden.", color = Gold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+		}
+
 		item {
 			Row(
 				modifier = Modifier
@@ -311,7 +317,7 @@ private fun GardenHome(state: GameState, active: Boolean, onGather: (Boolean) ->
 					.fillMaxWidth()
 					.height(5.dp)
 					.clip(CircleShape), color = Gold, trackColor = Hairline)
-				Text("Every 25 touches brings a gift of 15 seconds of production.", color = Muted, fontSize = 12.sp)
+				Text("Every 25 touches brings a gift of ${Garden.fireflySeconds(state)} seconds of production.", color = Muted, fontSize = 12.sp)
 			}
 		}
 
@@ -384,7 +390,7 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 					CultivatorCard(state, plant, amount, { onBuy(plant, amount) }) { purchasing = it }
 				}
 
-				item { Text("10 and Max plant as many as you can afford, up to the selected amount. Hold a Plant button to keep purchasing while affordable.", color = Muted, fontSize = 12.sp) }
+				item { Text("10 and Max plant as many as you can afford. Hold Plant to buy repeatedly. Payback estimates use the extra passive Glow per second at current rates, including synergies.", color = Muted, fontSize = 12.sp) }
 			} else {
 				item { Text("Make a little more of every light.", style = MaterialTheme.typography.headlineMedium) }
 				items(Almanac.research.sortedBy { it.id in state.research }, key = { it.id }) { research -> ResearchCard(state, research) { onResearch(research.id) } }
@@ -393,11 +399,19 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 	}
 }
 
+private fun synergyHint(cultivator: Cultivator) = when (cultivator) {
+	Cultivator.GLOWCAP -> "Every 10 Glowcaps boost Lantern lily production by 20%, up to 100%."
+	Cultivator.MOONWILLOW -> "Every 5 Moonwillows boost Firefly haven production by 15%, up to 75%."
+	Cultivator.CLOUD_LOOM -> "Every 5 Cloud looms boost Starwell production by 10%, up to 100%."
+	else -> null
+}
+
 @Composable
 private fun CultivatorCard(state: GameState, plant: Cultivator, amount: BuyAmount, onBuy: () -> Unit, onPressed: (Boolean) -> Unit) {
 	val discovered = Garden.discovered(state, plant)
 	val count = state.count(plant)
 	val quote = Garden.quote(state, plant, amount.limit)
+	val gain = if (quote.quantity > 0) Garden.productionGain(state, plant, quote.quantity) else 0.0
 	val nextMilestone = Garden.nextColonyMilestone(count)
 
 	CardBox {
@@ -413,6 +427,12 @@ private fun CultivatorCard(state: GameState, plant: Cultivator, amount: BuyAmoun
 		}
 
 		Text(plant.description, color = Muted, style = MaterialTheme.typography.bodyMedium)
+		synergyHint(plant)?.let { Text(it, color = Muted, fontSize = 12.sp) }
+
+		val synergy = Garden.synergyMultiplier(state, plant)
+		if (synergy > 1.0) {
+			Text("+${Display.number((synergy - 1.0) * 100.0)}% from supporting cultivators", color = Gold, fontSize = 12.sp)
+		}
 
 		if (discovered) {
 			if (nextMilestone != null) {
@@ -448,6 +468,9 @@ private fun CultivatorCard(state: GameState, plant: Cultivator, amount: BuyAmoun
 						Text("${Display.number(price)} Glow")
 					}
 				}
+			}
+			if (quote.quantity > 0) {
+				Text("+${Display.number(gain)} Glow/s · ${Display.payback(quote.cost, gain)} payback", color = Mint, fontSize = 12.sp)
 			}
 		} else {
 			Text("Discover at ${Display.number(plant.discovery)} Glow earned this garden", color = Gold, fontSize = 13.sp)
@@ -489,8 +512,9 @@ private fun ResearchCard(state: GameState, research: Research, onResearch: () ->
 }
 
 @Composable
-private fun DawnScreen(state: GameState, onPrestige: () -> Unit) {
+private fun DawnScreen(state: GameState, onPrestige: () -> Unit, onAttune: (Constellation) -> Unit) {
 	val reward = Garden.prestigeReward(state)
+	val constellation = state.constellation
 
 	LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
 		item {
@@ -548,6 +572,36 @@ private fun DawnScreen(state: GameState, onPrestige: () -> Unit) {
 				}
 
 				Text("Resets this garden's Glow, cultivators, and research. Your seeds and memories remain. You will confirm before anything resets.", color = Muted, fontSize = 12.sp)
+			}
+		}
+
+		if (state.dawns > 0) {
+			item { SectionHeading("Constellations", "Choose one strategy for this garden. You can choose again after restoring the next dawn.") }
+
+			if (constellation == null) {
+				items(Constellation.entries, key = { it.name }) { option ->
+					CardBox {
+						Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+							Glyph(symbol = Symbol.SPARK, color = Lilac)
+							Text(option.title, style = MaterialTheme.typography.titleMedium)
+						}
+
+						Text(option.description, color = Muted)
+						OutlinedButton(onClick = { onAttune(option) }, modifier = Modifier
+							.fillMaxWidth()
+							.heightIn(min = 48.dp)
+						) { Text("Follow this constellation") }
+					}
+				}
+			} else {
+				item {
+					CardBox {
+						Text("YOUR CONSTELLATION", color = Gold, style = MaterialTheme.typography.labelSmall)
+						Text(constellation.title, style = MaterialTheme.typography.titleMedium)
+						Text(constellation.description, color = Muted)
+						Text("Your next dawn opens another choice.", color = Gold, fontSize = 12.sp)
+					}
+				}
 			}
 		}
 

@@ -12,6 +12,7 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import xyz.attacktive.morrowlight.core.BuyAmount
+import xyz.attacktive.morrowlight.core.Constellation
 import xyz.attacktive.morrowlight.core.Cultivator
 import xyz.attacktive.morrowlight.core.GameState
 import xyz.attacktive.morrowlight.core.Garden
@@ -121,6 +122,8 @@ class GardenViewModel(application: Application): AndroidViewModel(application) {
 	fun research(id: String) = change { Garden.research(it, id) }
 
 	fun prestige() = change { Garden.prestige(it) }
+
+	fun attune(constellation: Constellation) = change { Garden.attune(it, constellation) }
 
 	fun preferences(preferences: Preferences) = change { it.copy(preferences = preferences) }
 

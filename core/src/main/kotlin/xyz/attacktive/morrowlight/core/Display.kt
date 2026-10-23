@@ -1,6 +1,7 @@
 package xyz.attacktive.morrowlight.core
 
 import java.util.Locale
+import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.log10
 import kotlin.math.pow
@@ -43,6 +44,23 @@ object Display {
 		}
 
 		return String.format(Locale.US, format, scaled, suffixes[group])
+	}
+
+	/** Time for a purchase to earn its cost back at its current incremental passive rate. */
+	fun payback(cost: Double, gainPerSecond: Double): String {
+		if (!cost.isFinite() || !gainPerSecond.isFinite() || cost < 0.0 || gainPerSecond <= 0.0) {
+			return "unavailable"
+		}
+
+		val seconds = cost / gainPerSecond
+
+		return when {
+			!seconds.isFinite() -> "unavailable"
+			seconds < 1.0 -> "<1s"
+			seconds >= 31_536_000.0 -> ">1y"
+			seconds >= 86_400.0 -> "${ceil(seconds / 86_400.0).toLong()}d"
+			else -> duration(ceil(seconds).toLong())
+		}
 	}
 
 	fun duration(seconds: Long): String {

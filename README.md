@@ -13,7 +13,9 @@ A native Android incremental game about bringing a floating garden back to life.
 - Tap the garden or **Hold to gather light**. Press and hold either surface to gather continuously after a brief delay.
 - Spend your first 15 Glow on a **Glowcap** to start producing light automatically. Grow six cultivators; each colony doubles its output at 10, 25, 50, and 100 plants.
 - In **Cultivate**, choose one, ten, or Max per purchase. Hold a plant's button to buy repeatedly; research upgrades remain single-action.
-- Every 25 touches completes a **Firefly Wish**, adding 15 seconds of current production.
+- Every 25 touches completes a **Firefly Wish**, adding 15 seconds of current production by default.
+- **Cultivator synergies** reward deliberate combinations: Glowcaps support Lantern lilies, Moonwillows support Firefly havens, and Cloud looms support Starwells. Cultivate previews the incremental Glow per second and estimated payback time of each purchase.
+- After your first dawn, choose one of four **Constellations** for the next garden. Each strengthens a different strategy with a trade-off; the choice lasts until the following dawn.
 - Restore the dawn after earning one million Glow in a garden. Each **Dawn Seed** permanently adds 15% to production and base touch power; larger gardens earn more. Seeds, memories, lifetime statistics, and preferences survive the reset.
 - Your garden keeps growing while you are away, for up to 8 hours initially and up to 24 hours with research.
 

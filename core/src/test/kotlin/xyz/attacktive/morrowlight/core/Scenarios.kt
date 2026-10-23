@@ -318,6 +318,12 @@ object Scenarios {
 				close(42.0, (SaveStore(directory).load() as LoadResult.Ready).state.glow)
 			}
 		},
+		"Payback labels reflect incremental passive production" to {
+			check(Display.payback(15.0, 0.25) == "1m")
+			check(Display.payback(0.5, 5.0) == "<1s")
+			check(Display.payback(60.0, 0.0) == "unavailable")
+			check(Display.payback(86_400.0, 1.0) == "1d")
+		},
 		"Formatting covers small and astronomical numbers" to {
 			check(Display.number(0.25) == "0.25")
 			check(Display.number(1_000.0) == "1.00K")
