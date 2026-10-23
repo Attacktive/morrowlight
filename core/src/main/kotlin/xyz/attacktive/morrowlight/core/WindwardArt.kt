@@ -38,6 +38,18 @@ object WindwardArt {
 
 		path("M0 263 Q77 227 138 251 Q228 184 318 245 T480 228 L480 380 L0 380Z", 0xFF263449, 0.69f)
 		path("M0 293 Q68 249 151 272 T324 275 T480 254 L480 380 L0 380Z", 0xFF273B49, 0.75f)
+
+		if (state.skybridgeLevel > 0) {
+			val light = if (Garden.skybridgeActive(state)) GOLD else LILAC
+			path("M-16 185 Q31 200 92 247 L91 256 Q27 215 -16 197Z", 0xFF637A80, 0.95f)
+			path("M-16 173 Q28 180 90 242 M-16 187 Q32 201 93 250", light, 0.8f, 2.5f)
+			path("M-10 180 L-10 195 M21 191 L21 219 M53 214 L53 236 M82 238 L82 252", 0xFFB8C8BD, 0.78f, 2f)
+			repeat(state.skybridgeLevel) { index ->
+				halo(8f + index * 16f, 193f + index * 12f, 8f, light)
+				circle(8f + index * 16f, 193f + index * 12f, 2.5f, light, 0.9f)
+			}
+		}
+
 		oval(79f, 297f, 350f, 43f, 0xFF0B1924, 0.45f)
 		halo(244f, 249f, 145f, MIST)
 		path("M67 239 Q126 220 200 244 L277 229 L394 231 L421 249 L393 272 L360 298 L331 305 L284 353 L248 365 L217 342 L172 326 L148 296 L106 287Z", 0xFF243C4A)

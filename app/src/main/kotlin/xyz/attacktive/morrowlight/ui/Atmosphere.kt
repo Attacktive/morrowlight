@@ -113,7 +113,8 @@ fun GardenScene(state: GameState, animated: Boolean, modifier: Modifier = Modifi
 
 @Composable
 fun WindwardScene(state: GameState, animated: Boolean, modifier: Modifier = Modifier) {
-	val marks = remember(state.windwardLevels) { WindwardArt.scene(state) }
+	val bridgeActive = Garden.skybridgeActive(state)
+	val marks = remember(state.windwardLevels, state.skybridgeLevel, bridgeActive) { WindwardArt.scene(state) }
 	val paths = remember(marks) { marks.filterIsInstance<GardenMark.Shape>().associateWith { PathParser().parsePathString(it.data).toPath() } }
 	val still = remember { mutableFloatStateOf(0f) }
 	val phase: State<Float> = if (animated && !state.preferences.reducedMotion) {
@@ -125,7 +126,13 @@ fun WindwardScene(state: GameState, animated: Boolean, modifier: Modifier = Modi
 
 	val built = WindwardStructure.entries.count { Garden.windwardLevel(state, it) > 0 }
 
-	Canvas(modifier.semantics { contentDescription = "Windward Isle, a misty floating island with $built restored structures." }) {
+	val bridgeDescription = when {
+		state.skybridgeLevel == 0 -> "no Skybridge"
+		bridgeActive -> "an active Skybridge"
+		else -> "a dormant Skybridge"
+	}
+
+	Canvas(modifier.semantics { contentDescription = "Windward Isle, a misty floating island with $built restored structures and $bridgeDescription." }) {
 		drawRect(Brush.verticalGradient(listOf(Color(0xFF182435), Color(0xFF2A3951), Color(0xFF274B52))))
 
 		withTransform({ scale(size.width / 480f, size.height / 380f, Offset.Zero) }) {

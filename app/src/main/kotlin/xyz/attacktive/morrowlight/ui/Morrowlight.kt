@@ -79,6 +79,7 @@ import xyz.attacktive.morrowlight.core.FIREFLY_CHARGE
 import xyz.attacktive.morrowlight.core.GameState
 import xyz.attacktive.morrowlight.core.Garden
 import xyz.attacktive.morrowlight.core.MAX_OWNED
+import xyz.attacktive.morrowlight.core.MAX_SKYBRIDGE_LEVEL
 import xyz.attacktive.morrowlight.core.MoondewRouting
 import xyz.attacktive.morrowlight.core.PRESTIGE_THRESHOLD
 import xyz.attacktive.morrowlight.core.Preferences
@@ -104,6 +105,8 @@ fun Morrowlight(model: GardenViewModel) {
 			onContribute = model::contributeSkywork,
 			onRoute = model::routeMoondew,
 			onBuildWindward = model::buildWindward,
+			onBuildSkybridge = model::buildSkybridge,
+			onConnectSkybridge = model::connectSkybridge,
 			onPreferences = model::preferences,
 			onDismissOffline = model::dismissOffline,
 			onDismissRecovery = model::dismissRecovery,
@@ -123,6 +126,8 @@ private fun GardenApp(
 	onContribute: (Skywork, Contribution) -> Unit,
 	onRoute: (MoondewRouting) -> Unit,
 	onBuildWindward: (WindwardStructure) -> Unit,
+	onBuildSkybridge: () -> Unit,
+	onConnectSkybridge: (Cultivator?) -> Unit,
 	onPreferences: (Preferences) -> Unit,
 	onDismissOffline: () -> Unit,
 	onDismissRecovery: () -> Unit,
@@ -197,7 +202,7 @@ private fun GardenApp(
 						when (tab) {
 							0 -> GardenHome(state, ui.active, touch)
 							1 -> CultivateScreen(state, onBuy, onResearch)
-							2 -> SkyworksScreen(state, ui.active, onContribute, onRoute, onBuildWindward)
+							2 -> SkyworksScreen(state, ui.active, onContribute, onRoute, onBuildWindward, onBuildSkybridge, onConnectSkybridge)
 							3 -> DawnScreen(state, { confirmDawn = true }) { pendingConstellation = it }
 						}
 					}
@@ -216,7 +221,7 @@ private fun GardenApp(
 		AlertDialog(
 			onDismissRequest = { confirmDawn = false }, icon = { Glyph(symbol = Symbol.SUN, color = Gold) },
 			title = { Text("Begin again, brighter.", fontFamily = FontFamily.Serif) },
-			text = { Text("Receive $reward Dawn Seed${if (reward == 1L) "" else "s"}. Your Glow, cultivators, research, and firefly charge reset. All Dawn Seeds, Skyworks, Moondew, Windward structures, memories, and settings stay. Moondew routing returns to 0%.") },
+			text = { Text("Receive $reward Dawn Seed${if (reward == 1L) "" else "s"}. Your Glow, cultivators, research, and firefly charge reset. All Dawn Seeds, Skyworks, Moondew, Windward structures, Skybridge spans and your chosen colony, memories, and settings stay. Moondew routing returns to 0%; the saved Skybridge link wakes when its colony is regrown.") },
 			confirmButton = {
 				TextButton(onClick = {
 					onPrestige()
@@ -582,7 +587,9 @@ private fun SkyworksScreen(
 	active: Boolean,
 	onContribute: (Skywork, Contribution) -> Unit,
 	onRoute: (MoondewRouting) -> Unit,
-	onBuild: (WindwardStructure) -> Unit
+	onBuild: (WindwardStructure) -> Unit,
+	onBuildSkybridge: () -> Unit,
+	onConnectSkybridge: (Cultivator?) -> Unit
 ) {
 	var section by rememberSaveable { mutableIntStateOf(0) }
 
@@ -595,7 +602,7 @@ private fun SkyworksScreen(
 		if (section == 0) {
 			RestorationsScreen(state, onContribute, Modifier.weight(1f))
 		} else {
-			WindwardScreen(state, active, onRoute, onBuild, Modifier.weight(1f))
+			WindwardScreen(state, active, onRoute, onBuild, onBuildSkybridge, onConnectSkybridge, Modifier.weight(1f))
 		}
 	}
 }
@@ -606,6 +613,8 @@ private fun WindwardScreen(
 	active: Boolean,
 	onRoute: (MoondewRouting) -> Unit,
 	onBuild: (WindwardStructure) -> Unit,
+	onBuildSkybridge: () -> Unit,
+	onConnectSkybridge: (Cultivator?) -> Unit,
 	modifier: Modifier
 ) {
 	val unlocked = Garden.windwardUnlocked(state)
@@ -648,7 +657,7 @@ private fun WindwardScreen(
 					Text("+${Display.number(Garden.moondewRate(state))} Moondew / second", color = Lilac)
 					HorizontalDivider(color = Hairline)
 					Text("Garden keeps +${Display.number(Garden.glowRate(state))} Glow / second", color = Mint)
-					Text("Gross production: ${Display.number(Garden.production(state))} Glow/s. Diverted: ${Display.number(Garden.production(state) * state.routing.fraction)} Glow/s.", color = Muted, fontSize = 12.sp)
+					Text("Gross production: ${Display.number(Garden.production(state))} Glow/s. Total diverted: ${Display.number(Garden.totalRoutedGlow(state))} Glow/s, including ${Display.number(Garden.skybridgeRoutedGlow(state))} through the Skybridge.", color = Muted, fontSize = 12.sp)
 					Text("Wind chimes recover ${Display.number(Garden.routingRecovery(state) * 100.0)}% of the diverted Glow; each ${Display.number(1.0 / Garden.moondewConversion(state))} routed Glow makes 1 Moondew.", color = Muted, fontSize = 12.sp)
 				}
 			}
@@ -656,7 +665,7 @@ private fun WindwardScreen(
 			item {
 				CardBox {
 					Text("ROUTE PASSIVE GLOW", color = Gold, style = MaterialTheme.typography.labelSmall)
-					Text("Redirect passive production to earn Moondew. Taps and Firefly Wishes still grant Glow to your garden.", color = Muted)
+					Text("Redirect a share of remaining passive production to earn Moondew after any Skybridge transfer. Taps and Firefly Wishes still grant Glow to your garden.", color = Muted)
 					Column {
 						MoondewRouting.entries.chunked(2).forEach { row ->
 							Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -666,8 +675,12 @@ private fun WindwardScreen(
 							}
 						}
 					}
-					Text("Only retained Glow counts toward Dawn Seed progress. Moondew and structures survive dawns; routing resets to 0%.", color = Muted, fontSize = 12.sp)
+					Text("Only retained Glow counts toward Dawn Seed progress. Moondew, structures, and Skybridge choices survive dawns; global routing resets to 0%.", color = Muted, fontSize = 12.sp)
 				}
+			}
+
+			item {
+				SkybridgePanel(state, onBuildSkybridge, onConnectSkybridge) { purchasing = it }
 			}
 
 			item { SectionHeading("Island structures", "Spend Moondew to improve both islands. Hold Build to upgrade repeatedly.") }
@@ -718,6 +731,98 @@ private fun WindwardScreen(
 		}
 	}
 }
+
+@Composable
+private fun SkybridgePanel(state: GameState, onBuild: () -> Unit, onConnect: (Cultivator?) -> Unit, onPressed: (Boolean) -> Unit) {
+	var candidateIndex by rememberSaveable { mutableIntStateOf(-1) }
+	val linked = state.skybridgeCultivator
+	val active = Garden.skybridgeActive(state)
+	val cost = Garden.skybridgeNextCost(state)
+
+	CardBox {
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+			Glyph(symbol = Symbol.BRIDGE, color = if (state.skybridgeLevel > 0) Gold else Lilac)
+			Text("Skybridges", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+			Text("${state.skybridgeLevel} / $MAX_SKYBRIDGE_LEVEL", color = if (state.skybridgeLevel > 0) Mint else Muted)
+		}
+
+		Text("Connect one mainland colony to Windward. Each permanent span adds 15% production to that colony, but 30% of its boosted Glow crosses the bridge as Moondew before global routing.", color = Muted)
+		Text("Wind chimes recover Glow from both routes. One connection at a time; changing it is free.", color = Gold, fontSize = 12.sp)
+
+		if (cost != null) {
+			if (active) {
+				val gain = Garden.skybridgeUpgradeGain(state)
+				Text("Next span: ${signedRateChange(gain.glowPerSecond, "Glow")}, ${signedRateChange(gain.moondewPerSecond, "Moondew")}", color = Mint, fontSize = 12.sp)
+			} else {
+				Text(if (state.skybridgeLevel == 0) "Raise the first span to unlock colony links." else "Connect or regrow the linked colony to preview the next span's return.", color = Muted, fontSize = 12.sp)
+			}
+
+			RepeatBuyButton(
+				onBuy = onBuild,
+				enabled = Garden.canBuildSkybridge(state),
+				onPressed = onPressed,
+				modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+				colors = ButtonDefaults.buttonColors(containerColor = Mint, contentColor = Night)
+			) {
+				Text("Build span · ${Display.number(cost)} Moondew")
+			}
+		} else {
+			Text("ALL FIVE SPANS RESTORED", style = MaterialTheme.typography.labelSmall, color = Mint)
+		}
+
+		if (state.skybridgeLevel > 0) {
+			HorizontalDivider(color = Hairline)
+			Text("CONNECTED COLONY", color = Gold, style = MaterialTheme.typography.labelSmall)
+			Text(when {
+				linked == null -> "No colony connected"
+				active -> "${linked.title} · transmitting ${Display.number(Garden.skybridgeRoutedGlow(state))} Glow/s"
+				else -> "${linked.title} · dormant until replanted"
+			}, color = if (active) Mint else Muted)
+
+			Text("Choose an owned colony to preview the Glow you keep and Moondew you gain before reconnecting.", color = Muted, fontSize = 12.sp)
+
+			Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+				Cultivator.entries.chunked(2).forEach { row ->
+					Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+						row.forEach { cultivar ->
+							FilterChip(
+								selected = candidateIndex == cultivar.ordinal,
+								onClick = { candidateIndex = cultivar.ordinal },
+								enabled = state.count(cultivar) > 0,
+								label = { Text(cultivar.title, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+								modifier = Modifier.weight(1f)
+							)
+						}
+					}
+				}
+			}
+
+			val candidate = Cultivator.entries.getOrNull(candidateIndex)
+			if (candidate != null && state.count(candidate) > 0) {
+				val gain = Garden.skybridgeSelectionGain(state, candidate)
+				val compared = state.copy(skybridgeCultivator = candidate)
+				Text("If connected: +${Display.number(Garden.glowRate(compared))} Glow/s, +${Display.number(Garden.moondewRate(compared))} Moondew/s", color = Ink, fontSize = 12.sp)
+				Text("Change: ${signedRateChange(gain.glowPerSecond, "Glow")}, ${signedRateChange(gain.moondewPerSecond, "Moondew")}", color = if (gain.glowPerSecond < 0.0) Gold else Mint, fontSize = 12.sp)
+
+				Button(onClick = { onConnect(candidate) }, enabled = linked != candidate, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors(containerColor = Mint, contentColor = Night)) {
+					Text(if (linked == candidate) "Already connected" else "Connect ${candidate.title}")
+				}
+			} else {
+				Text("Select an available colony above to compare both rates.", color = Muted, fontSize = 12.sp)
+			}
+
+			if (linked != null) {
+				OutlinedButton(onClick = { onConnect(null) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+					Text("Disconnect colony")
+				}
+			}
+
+			Text("Skybridge level and selected colony survive dawns. The link wakes when you regrow that colony. No timers or daily upkeep.", color = Muted, fontSize = 12.sp)
+		}
+	}
+}
+
+private fun signedRateChange(value: Double, resource: String) = "${if (value < 0.0) "-" else "+"}${Display.number(kotlin.math.abs(value))} $resource/s"
 
 @Composable
 private fun RestorationsScreen(state: GameState, onContribute: (Skywork, Contribution) -> Unit, modifier: Modifier) {
@@ -869,7 +974,7 @@ private fun DawnScreen(state: GameState, onPrestige: () -> Unit, onAttune: (Cons
 					Text("Restore the dawn")
 				}
 
-				Text("Resets this garden's Glow, cultivators, and research. Your seeds, Skyworks, Moondew, and Windward structures remain. Moondew routing resets to 0%. You will confirm before the dawn.", color = Muted, fontSize = 12.sp)
+				Text("Resets this garden's Glow, cultivators, and research. Your seeds, Skyworks, Moondew, Windward structures, Skybridge spans, and linked colony remain. Global routing resets to 0%, and the Skybridge waits for its colony to regrow. You will confirm before the dawn.", color = Muted, fontSize = 12.sp)
 			}
 		}
 
@@ -944,7 +1049,7 @@ private fun SettingsDialog(state: GameState, onPreferences: (Preferences) -> Uni
 				PreferenceRow("Gentle haptics", "A little response when you gather light.", state.preferences.haptics) { onPreferences(state.preferences.copy(haptics = it)) }
 				HorizontalDivider(color = Hairline)
 				Text("A garden, not a chore.", style = MaterialTheme.typography.titleMedium)
-				Text("Offline growth applies your Moondew routing for up to ${Garden.offlineLimitHours(state)} hours. No background service, timer notification, or internet connection is needed.")
+				Text("Offline growth applies your Moondew routing and active Skybridge for up to ${Garden.offlineLimitHours(state)} hours. No background service, timer notification, or internet connection is needed.")
 				Text("Progress is saved on purchases, on leaving the app, and every five seconds while playing. Two local checkpoints protect against interrupted writes.")
 				Text("Morrowlight 1.0 \u00b7 No ads. No accounts. Just a little light.", color = Muted)
 			}
@@ -998,6 +1103,8 @@ private fun FirstLightPreview() {
 			onContribute = { _, _ -> },
 			onRoute = {},
 			onBuildWindward = {},
+			onBuildSkybridge = {},
+			onConnectSkybridge = {},
 			onPreferences = {},
 			onDismissOffline = {},
 			onDismissRecovery = {},
@@ -1021,6 +1128,8 @@ private fun LivingGardenPreview() {
 			onContribute = { _, _ -> },
 			onRoute = {},
 			onBuildWindward = {},
+			onBuildSkybridge = {},
+			onConnectSkybridge = {},
 			onPreferences = {},
 			onDismissOffline = {},
 			onDismissRecovery = {},
@@ -1041,10 +1150,12 @@ private fun WindwardIslePreview() {
 		skyworks = Skywork.entries.map { it.cost },
 		moondew = 240_000.0,
 		routing = MoondewRouting.HALF,
-		windwardLevels = listOf(3, 2, 1)
+		windwardLevels = listOf(3, 2, 1),
+		skybridgeLevel = 2,
+		skybridgeCultivator = Cultivator.MOONWILLOW
 	)
 
 	MorrowTheme {
-		WindwardScreen(state, false, {}, {}, Modifier.fillMaxSize())
+		WindwardScreen(state, false, {}, {}, {}, {}, Modifier.fillMaxSize())
 	}
 }

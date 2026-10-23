@@ -135,6 +135,10 @@ class GardenViewModel(application: Application): AndroidViewModel(application) {
 
 	fun buildWindward(structure: WindwardStructure) = change { Garden.buildWindward(it, structure) }
 
+	fun buildSkybridge() = change { Garden.buildSkybridge(it) }
+
+	fun connectSkybridge(cultivator: Cultivator?) = change { Garden.connectSkybridge(it, cultivator) }
+
 	fun preferences(preferences: Preferences) = change { it.copy(preferences = preferences) }
 
 	fun dismissOffline() {
