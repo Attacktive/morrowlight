@@ -298,7 +298,6 @@ private fun GardenHome(state: GameState, active: Boolean, onGather: (Boolean) ->
 				GardenScene(state, active, Modifier
 					.fillMaxWidth()
 					.aspectRatio(480f / 380f)
-					.gatherPress(onGather) { gathering = it }
 				)
 
 				Row(Modifier

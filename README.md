@@ -10,7 +10,7 @@ A native Android incremental game about bringing a floating garden back to life.
 
 ## Play
 
-- Tap the garden or **Hold to gather light**. Press and hold either surface to gather continuously after a brief delay.
+- Tap or press and hold **Hold to gather light** to collect Glow, with continuous gathering after a brief delay. The garden artwork is for viewing and scrolling only, so swiping over it never triggers a tap.
 - Spend your first 15 Glow on a **Glowcap** to start producing light automatically. Grow six cultivators; each colony doubles its output at 10, 25, 50, and 100 plants.
 - In **Cultivate**, switch between **Cultivators** and **Research** using controls that remain visible while scrolling, just like the Glow balance. Choose one, ten, or Max per purchase. Hold a plant's button to buy repeatedly; research upgrades remain single-action.
 - Every 25 touches completes a **Firefly Wish**, adding 15 seconds of current production by default.
