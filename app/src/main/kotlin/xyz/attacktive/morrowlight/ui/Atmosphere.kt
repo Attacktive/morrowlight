@@ -41,6 +41,8 @@ import xyz.attacktive.morrowlight.core.Garden
 import xyz.attacktive.morrowlight.core.GardenArt
 import xyz.attacktive.morrowlight.core.GardenMark
 import xyz.attacktive.morrowlight.core.Skywork
+import xyz.attacktive.morrowlight.core.WindwardArt
+import xyz.attacktive.morrowlight.core.WindwardStructure
 
 val Night = Color(0xFF111A25)
 val Panel = Color(0xFF1C2933)
@@ -86,6 +88,45 @@ fun GardenScene(state: GameState, animated: Boolean, modifier: Modifier = Modifi
 
 	Canvas(modifier.semantics { contentDescription = "A floating garden with ${state.owned.sum()} cultivators, ${Skywork.entries.count { Garden.skyworkComplete(state, it) }} restored structures, and a glowing ember." }) {
 		drawRect(Brush.verticalGradient(listOf(Color(0xFF192135), Color(0xFF242C43), Color(0xFF263D44))))
+
+		withTransform({ scale(size.width / 480f, size.height / 380f, Offset.Zero) }) {
+			for (mark in marks) {
+				val color = Color(mark.color).copy(alpha = mark.alpha)
+				when (mark) {
+					is GardenMark.Circle -> {
+						val dx = if (mark.drift == 0f) 0f else sin(phase.value + mark.drift) * 7f
+						val dy = if (mark.drift == 0f) 0f else cos(phase.value * 2f + mark.drift) * 5f
+						drawCircle(color, mark.radius, Offset(mark.x + dx, mark.y + dy))
+					}
+
+					is GardenMark.Oval -> drawOval(color, Offset(mark.x, mark.y), Size(mark.width, mark.height))
+					is GardenMark.Shape -> if (mark.stroke > 0f) {
+						drawPath(paths.getValue(mark), color, style = Stroke(mark.stroke, cap = StrokeCap.Round))
+					} else {
+						drawPath(paths.getValue(mark), color)
+					}
+				}
+			}
+		}
+	}
+}
+
+@Composable
+fun WindwardScene(state: GameState, animated: Boolean, modifier: Modifier = Modifier) {
+	val marks = remember(state.windwardLevels) { WindwardArt.scene(state) }
+	val paths = remember(marks) { marks.filterIsInstance<GardenMark.Shape>().associateWith { PathParser().parsePathString(it.data).toPath() } }
+	val still = remember { mutableFloatStateOf(0f) }
+	val phase: State<Float> = if (animated && !state.preferences.reducedMotion) {
+		val transition = rememberInfiniteTransition(label = "Windward mist")
+		transition.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(14_000, easing = LinearEasing), RepeatMode.Restart), label = "Moondew motes")
+	} else {
+		still
+	}
+
+	val built = WindwardStructure.entries.count { Garden.windwardLevel(state, it) > 0 }
+
+	Canvas(modifier.semantics { contentDescription = "Windward Isle, a misty floating island with $built restored structures." }) {
+		drawRect(Brush.verticalGradient(listOf(Color(0xFF182435), Color(0xFF2A3951), Color(0xFF274B52))))
 
 		withTransform({ scale(size.width / 480f, size.height / 380f, Offset.Zero) }) {
 			for (mark in marks) {

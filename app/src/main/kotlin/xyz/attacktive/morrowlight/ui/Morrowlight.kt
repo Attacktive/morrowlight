@@ -79,10 +79,12 @@ import xyz.attacktive.morrowlight.core.FIREFLY_CHARGE
 import xyz.attacktive.morrowlight.core.GameState
 import xyz.attacktive.morrowlight.core.Garden
 import xyz.attacktive.morrowlight.core.MAX_OWNED
+import xyz.attacktive.morrowlight.core.MoondewRouting
 import xyz.attacktive.morrowlight.core.PRESTIGE_THRESHOLD
 import xyz.attacktive.morrowlight.core.Preferences
 import xyz.attacktive.morrowlight.core.Research
 import xyz.attacktive.morrowlight.core.Skywork
+import xyz.attacktive.morrowlight.core.WindwardStructure
 
 private val chapterNames = listOf("A spark in the quiet", "Small things, growing", "The moon takes root", "Between earth and sky", "The stars came home", "A morning worth making")
 private val chapterNotes = listOf("Even the longest night begins to end somewhere.", "Your little patch of dark is becoming a garden.", "Silver leaves. Golden lanterns. Room to breathe.", "The island is learning how to hold the sky.", "You made a home for something extraordinary.", "Let this light become the seed of another dawn.")
@@ -100,6 +102,8 @@ fun Morrowlight(model: GardenViewModel) {
 			onPrestige = model::prestige,
 			onAttune = model::attune,
 			onContribute = model::contributeSkywork,
+			onRoute = model::routeMoondew,
+			onBuildWindward = model::buildWindward,
 			onPreferences = model::preferences,
 			onDismissOffline = model::dismissOffline,
 			onDismissRecovery = model::dismissRecovery,
@@ -117,6 +121,8 @@ private fun GardenApp(
 	onPrestige: () -> Unit,
 	onAttune: (Constellation) -> Unit,
 	onContribute: (Skywork, Contribution) -> Unit,
+	onRoute: (MoondewRouting) -> Unit,
+	onBuildWindward: (WindwardStructure) -> Unit,
 	onPreferences: (Preferences) -> Unit,
 	onDismissOffline: () -> Unit,
 	onDismissRecovery: () -> Unit,
@@ -191,7 +197,7 @@ private fun GardenApp(
 						when (tab) {
 							0 -> GardenHome(state, ui.active, touch)
 							1 -> CultivateScreen(state, onBuy, onResearch)
-							2 -> SkyworksScreen(state, onContribute)
+							2 -> SkyworksScreen(state, ui.active, onContribute, onRoute, onBuildWindward)
 							3 -> DawnScreen(state, { confirmDawn = true }) { pendingConstellation = it }
 						}
 					}
@@ -210,7 +216,7 @@ private fun GardenApp(
 		AlertDialog(
 			onDismissRequest = { confirmDawn = false }, icon = { Glyph(symbol = Symbol.SUN, color = Gold) },
 			title = { Text("Begin again, brighter.", fontFamily = FontFamily.Serif) },
-			text = { Text("Receive $reward Dawn Seed${if (reward == 1L) "" else "s"}. Your Glow, cultivators, research, and firefly charge reset. All Dawn Seeds, Skyworks restorations, memories, lifetime Glow, and settings stay with you.") },
+			text = { Text("Receive $reward Dawn Seed${if (reward == 1L) "" else "s"}. Your Glow, cultivators, research, and firefly charge reset. All Dawn Seeds, Skyworks, Moondew, Windward structures, memories, and settings stay. Moondew routing returns to 0%.") },
 			confirmButton = {
 				TextButton(onClick = {
 					onPrestige()
@@ -245,7 +251,11 @@ private fun GardenApp(
 			text = {
 				Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
 					Text("+${Display.number(growth.earned)} Glow", fontSize = 30.sp, color = Gold)
-					Text("Your garden grew for ${Display.duration(growth.seconds)} at full production. This light is already yours.")
+					if (growth.moondewEarned > 0.0) {
+						Text("+${Display.number(growth.moondewEarned)} Moondew", fontSize = 24.sp, color = Lilac)
+					}
+
+					Text("Both islands grew for ${Display.duration(growth.seconds)} at your selected passive routing. These resources are already yours.")
 
 					if (growth.capped) {
 						Text("Offline growth reached your ${Garden.offlineLimitHours(state)}-hour limit.", color = Muted)
@@ -314,7 +324,8 @@ private fun GardenHome(state: GameState, active: Boolean, onGather: (Boolean) ->
 
 		if (state.dawns > 0) {
 			val restored = Skywork.entries.count { Garden.skyworkComplete(state, it) }
-			item { Text("Skyworks: $restored of ${Skywork.entries.size} restorations complete. Every contribution survives the next dawn.", color = Gold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+			val note = if (Garden.windwardUnlocked(state)) "Windward Isle is open! Explore its Moondew economy through Skyworks." else "Skyworks: $restored of ${Skywork.entries.size} restorations complete. Every contribution survives the next dawn."
+			item { Text(note, color = Gold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
 		}
 
 		if (state.dawns > 0 && state.constellation == null) {
@@ -372,11 +383,15 @@ private fun Balance(state: GameState) {
 		Text(Display.number(state.glow), fontSize = 46.sp, lineHeight = 52.sp, fontWeight = FontWeight.Light, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { contentDescription = "${Display.number(state.glow)} Glow available" })
 
 		Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-			Text("+${Display.number(Garden.production(state))} / second", color = Mint, fontSize = 14.sp)
+			Text("+${Display.number(Garden.glowRate(state))} Glow / second", color = Mint, fontSize = 14.sp)
 
 			if (state.dawnSeeds > 0) {
 				Text("${Display.number(Garden.seedMultiplier(state))}x dawn bonus", color = Gold, fontSize = 12.sp)
 			}
+		}
+
+		if (state.routing != MoondewRouting.NONE) {
+			Text("Routing ${state.routing.title}: ${Display.number(Garden.production(state))} gross Glow/s; +${Display.number(Garden.moondewRate(state))} Moondew/s", color = Lilac, fontSize = 12.sp)
 		}
 
 		if (Garden.skyworkComplete(state, Skywork.WINDMILLS)) {
@@ -432,7 +447,7 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 					CultivatorCard(state, plant, amount, { onBuy(plant, amount) }) { purchasing = it }
 				}
 
-				item { Text("10 and Max plant as many as you can afford. Hold Plant to buy repeatedly. Payback estimates use the extra passive Glow per second at current rates, including synergies.", color = Muted, fontSize = 12.sp) }
+				item { Text("10 and Max plant as many as you can afford. Hold Plant to buy repeatedly. Payback estimates use extra Glow retained by your garden after any Moondew routing, including synergies.", color = Muted, fontSize = 12.sp) }
 			} else {
 				item { Text("Make a little more of every light.", style = MaterialTheme.typography.headlineMedium) }
 				items(Almanac.research.sortedBy { it.id in state.research }, key = { it.id }) { research -> ResearchCard(state, research) { onResearch(research.id) } }
@@ -557,12 +572,141 @@ private fun ResearchCard(state: GameState, research: Research, onResearch: () ->
 
 
 @Composable
-private fun SkyworksScreen(state: GameState, onContribute: (Skywork, Contribution) -> Unit) {
+private fun SkyworksScreen(
+	state: GameState,
+	active: Boolean,
+	onContribute: (Skywork, Contribution) -> Unit,
+	onRoute: (MoondewRouting) -> Unit,
+	onBuild: (WindwardStructure) -> Unit
+) {
+	var section by rememberSaveable { mutableIntStateOf(0) }
+
+	Column(Modifier.fillMaxSize()) {
+		Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+			FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Restorations") })
+			FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("Windward Isle") })
+		}
+
+		if (section == 0) {
+			RestorationsScreen(state, onContribute, Modifier.weight(1f))
+		} else {
+			WindwardScreen(state, active, onRoute, onBuild, Modifier.weight(1f))
+		}
+	}
+}
+
+@Composable
+private fun WindwardScreen(
+	state: GameState,
+	active: Boolean,
+	onRoute: (MoondewRouting) -> Unit,
+	onBuild: (WindwardStructure) -> Unit,
+	modifier: Modifier
+) {
+	val unlocked = Garden.windwardUnlocked(state)
+
+	LazyColumn(modifier = modifier, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+		item {
+			Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+				Text("Windward Isle", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
+				Text(if (unlocked) "Two gardens, one sky. Choose where tomorrow's light goes." else "Another shore waits beyond the restored moon terrace.", color = Muted, textAlign = TextAlign.Center)
+			}
+		}
+
+		item {
+			Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).border(1.dp, Hairline, RoundedCornerShape(28.dp))) {
+				WindwardScene(state, active, Modifier.fillMaxWidth().aspectRatio(480f / 380f))
+			}
+		}
+
+		if (!unlocked) {
+			item {
+				CardBox {
+					Text("THE BRIDGE ISN'T READY", color = Gold, style = MaterialTheme.typography.labelSmall)
+					Text("Complete all three Skyworks restorations, ending with the moon terrace, to open Windward Isle.", color = Muted)
+					Text("No Moondew can be produced or spent until the crossing is restored.", color = Muted, fontSize = 12.sp)
+				}
+			}
+		} else {
+			item {
+				CardBox {
+					Text("MOONDEW", color = Lilac, style = MaterialTheme.typography.labelSmall)
+					Text(Display.number(state.moondew), fontFamily = FontFamily.Serif, fontSize = 40.sp, color = Ink)
+					Text("+${Display.number(Garden.moondewRate(state))} Moondew / second", color = Lilac)
+					HorizontalDivider(color = Hairline)
+					Text("Garden keeps +${Display.number(Garden.glowRate(state))} Glow / second", color = Mint)
+					Text("Gross production: ${Display.number(Garden.production(state))} Glow/s. Diverted: ${Display.number(Garden.production(state) * state.routing.fraction)} Glow/s.", color = Muted, fontSize = 12.sp)
+					Text("Wind chimes recover ${Display.number(Garden.routingRecovery(state) * 100.0)}% of the diverted Glow; each ${Display.number(1.0 / Garden.moondewConversion(state))} routed Glow makes 1 Moondew.", color = Muted, fontSize = 12.sp)
+				}
+			}
+
+			item {
+				CardBox {
+					Text("ROUTE PASSIVE GLOW", color = Gold, style = MaterialTheme.typography.labelSmall)
+					Text("Redirect passive production to earn Moondew. Taps and Firefly Wishes still grant Glow to your garden.", color = Muted)
+					Column {
+						MoondewRouting.entries.chunked(2).forEach { row ->
+							Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+								row.forEach { option ->
+									FilterChip(selected = state.routing == option, onClick = { onRoute(option) }, label = { Text(option.title) }, modifier = Modifier.weight(1f))
+								}
+							}
+						}
+					}
+					Text("Only retained Glow counts toward Dawn Seed progress. Moondew and structures survive dawns; routing resets to 0%.", color = Muted, fontSize = 12.sp)
+				}
+			}
+
+			item { SectionHeading("Island structures", "Spend Moondew to permanently improve your two-island economy.") }
+
+			items(WindwardStructure.entries, key = { it.name }) { structure ->
+				val level = Garden.windwardLevel(state, structure)
+				val nextCost = Garden.windwardNextCost(state, structure)
+				val gain = Garden.windwardGain(state, structure)
+				val effect = when (structure) {
+					WindwardStructure.MIST_CONDENSER -> "Conversion: +${Display.number(level * 35.0)}% Moondew per routed Glow."
+					WindwardStructure.WIND_CHIMES -> "Returning ${Display.number(Garden.routingRecovery(state) * 100.0)}% of diverted Glow."
+					WindwardStructure.STAR_BEACON -> "Gross production: ${Display.number(Garden.windwardProductionMultiplier(state))}x from the beacon."
+				}
+
+				CardBox {
+					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+						Glyph(symbol = Symbol.SPARK, color = if (level > 0) Gold else Lilac)
+						Text(structure.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+						Text("$level / ${structure.maxLevel}", color = if (level > 0) Mint else Muted)
+					}
+
+					Text(structure.description, color = Muted)
+					Text(effect, color = Gold, fontSize = 12.sp)
+
+					if (nextCost == null) {
+						Text("FULLY RESTORED", style = MaterialTheme.typography.labelSmall, color = Mint)
+					} else {
+						Text("Next level: +${Display.number(gain.glowPerSecond)} Glow/s, +${Display.number(gain.moondewPerSecond)} Moondew/s", color = Mint, fontSize = 12.sp)
+
+						if (gain.moondewPerSecond > 0.0) {
+							Text("Moondew-only payback at current routing: ${Display.payback(nextCost, gain.moondewPerSecond)}", color = Muted, fontSize = 12.sp)
+						} else {
+							Text(if (structure == WindwardStructure.WIND_CHIMES) "Returns routed Glow to your home garden; no direct Moondew payback." else "Route some Glow to estimate the Moondew payback.", color = Muted, fontSize = 12.sp)
+						}
+
+						Button(onClick = { onBuild(structure) }, enabled = Garden.canBuildWindward(state, structure), modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp), colors = ButtonDefaults.buttonColors(containerColor = Mint, contentColor = Night)) {
+							Text("Build · ${Display.number(nextCost)} Moondew")
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+@Composable
+private fun RestorationsScreen(state: GameState, onContribute: (Skywork, Contribution) -> Unit, modifier: Modifier) {
 	var contributionIndex by rememberSaveable { mutableIntStateOf(0) }
 	val contribution = Contribution.entries[contributionIndex]
 	val finished = Skywork.entries.count { Garden.skyworkComplete(state, it) }
 
-	LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+	LazyColumn(modifier = modifier, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
 		item {
 			Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
 				Box(Modifier.size(80.dp).background(Lilac.copy(alpha = 0.09f), CircleShape), contentAlignment = Alignment.Center) { Glyph(Modifier.size(42.dp), Symbol.BRIDGE, Lilac) }
@@ -617,7 +761,7 @@ private fun SkyworksScreen(state: GameState, onContribute: (Skywork, Contributio
 					if (available) {
 						val quote = Garden.skyworkQuote(state, work, contribution)
 						val afterAvailable = (remaining - state.glow).coerceAtLeast(0.0)
-						val rate = Garden.production(state)
+						val rate = Garden.glowRate(state)
 						val estimate = when {
 							afterAvailable == 0.0 -> "You already hold enough Glow to complete this project."
 							rate > 0.0 -> "At current production, around ${Display.payback(afterAvailable, rate)} to earn the Glow still needed, assuming you invest your current balance."
@@ -638,7 +782,7 @@ private fun SkyworksScreen(state: GameState, onContribute: (Skywork, Contributio
 				item {
 					CardBox {
 						Text("ALL LIGHTS RESTORED", color = Gold, style = MaterialTheme.typography.labelSmall)
-						Text("The next island is ready for a future update. Until then, your restored bonuses and memories remain yours.", color = Muted)
+						Text("Windward Isle is open. Select Windward above to visit your second floating garden.", color = Muted)
 					}
 				}
 			}
@@ -706,7 +850,7 @@ private fun DawnScreen(state: GameState, onPrestige: () -> Unit, onAttune: (Cons
 					Text("Restore the dawn")
 				}
 
-				Text("Resets this garden's Glow, cultivators, and research. Your seeds, Skyworks restorations, and memories remain. You will confirm before anything resets.", color = Muted, fontSize = 12.sp)
+				Text("Resets this garden's Glow, cultivators, and research. Your seeds, Skyworks, Moondew, and Windward structures remain. Moondew routing resets to 0%. You will confirm before the dawn.", color = Muted, fontSize = 12.sp)
 			}
 		}
 
@@ -781,7 +925,7 @@ private fun SettingsDialog(state: GameState, onPreferences: (Preferences) -> Uni
 				PreferenceRow("Gentle haptics", "A little response when you gather light.", state.preferences.haptics) { onPreferences(state.preferences.copy(haptics = it)) }
 				HorizontalDivider(color = Hairline)
 				Text("A garden, not a chore.", style = MaterialTheme.typography.titleMedium)
-				Text("Offline growth runs at full production for up to ${Garden.offlineLimitHours(state)} hours. No background service, timer notification, or internet connection is needed.")
+				Text("Offline growth applies your Moondew routing for up to ${Garden.offlineLimitHours(state)} hours. No background service, timer notification, or internet connection is needed.")
 				Text("Progress is saved on purchases, on leaving the app, and every five seconds while playing. Two local checkpoints protect against interrupted writes.")
 				Text("Morrowlight 1.0 \u00b7 No ads. No accounts. Just a little light.", color = Muted)
 			}
@@ -833,6 +977,8 @@ private fun FirstLightPreview() {
 			onPrestige = {},
 			onAttune = {},
 			onContribute = { _, _ -> },
+			onRoute = {},
+			onBuildWindward = {},
 			onPreferences = {},
 			onDismissOffline = {},
 			onDismissRecovery = {},
@@ -854,10 +1000,32 @@ private fun LivingGardenPreview() {
 			onPrestige = {},
 			onAttune = {},
 			onContribute = { _, _ -> },
+			onRoute = {},
+			onBuildWindward = {},
 			onPreferences = {},
 			onDismissOffline = {},
 			onDismissRecovery = {},
 			onRetry = {}
 		)
+	}
+}
+
+@Preview(name = "Windward Isle", widthDp = 390, heightDp = 844, showBackground = true)
+@Composable
+private fun WindwardIslePreview() {
+	val state = GameState(
+		glow = 5_000_000.0,
+		runGlow = 300_000_000.0,
+		lifetimeGlow = 600_000_000.0,
+		owned = listOf(25, 20, 10, 6, 5, 2),
+		dawns = 3,
+		skyworks = Skywork.entries.map { it.cost },
+		moondew = 240_000.0,
+		routing = MoondewRouting.HALF,
+		windwardLevels = listOf(3, 2, 1)
+	)
+
+	MorrowTheme {
+		WindwardScreen(state, false, {}, {}, Modifier.fillMaxSize())
 	}
 }

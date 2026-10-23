@@ -18,10 +18,12 @@ import xyz.attacktive.morrowlight.core.Cultivator
 import xyz.attacktive.morrowlight.core.GameState
 import xyz.attacktive.morrowlight.core.Garden
 import xyz.attacktive.morrowlight.core.LoadResult
+import xyz.attacktive.morrowlight.core.MoondewRouting
 import xyz.attacktive.morrowlight.core.OfflineGrowth
 import xyz.attacktive.morrowlight.core.PlayClock
 import xyz.attacktive.morrowlight.core.Preferences
 import xyz.attacktive.morrowlight.core.Skywork
+import xyz.attacktive.morrowlight.core.WindwardStructure
 
 data class GardenUiState(val garden: GameState = GameState(), val loading: Boolean = true, val loadError: String? = null, val saveError: String? = null, val recovered: Boolean = false, val offline: OfflineGrowth? = null, val active: Boolean = false)
 
@@ -68,7 +70,7 @@ class GardenViewModel(application: Application): AndroidViewModel(application) {
 		}
 
 		val growth = clock.enter(current.garden, System.currentTimeMillis(), SystemClock.elapsedRealtime())
-		mutableUi.value = current.copy(garden = growth.state, active = true, offline = growth.takeIf { it.seconds >= 60 && it.earned > 0.0 } ?: current.offline)
+		mutableUi.value = current.copy(garden = growth.state, active = true, offline = growth.takeIf { it.seconds >= 60 && (it.earned > 0.0 || it.moondewEarned > 0.0) } ?: current.offline)
 		persist()
 
 		ticker = viewModelScope.launch {
@@ -128,6 +130,10 @@ class GardenViewModel(application: Application): AndroidViewModel(application) {
 	fun attune(constellation: Constellation) = change { Garden.attune(it, constellation) }
 
 	fun contributeSkywork(work: Skywork, contribution: Contribution) = change { Garden.contributeSkywork(it, work, contribution) }
+
+	fun routeMoondew(routing: MoondewRouting) = change { Garden.routeMoondew(it, routing) }
+
+	fun buildWindward(structure: WindwardStructure) = change { Garden.buildWindward(it, structure) }
 
 	fun preferences(preferences: Preferences) = change { it.copy(preferences = preferences) }
 
