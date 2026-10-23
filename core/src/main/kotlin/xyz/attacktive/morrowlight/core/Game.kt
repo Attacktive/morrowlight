@@ -9,6 +9,8 @@ const val MAX_OWNED = 1_000
 const val MAX_SEEDS = 1_000_000_000L
 const val PRESTIGE_THRESHOLD = 1_000_000.0
 const val FIREFLY_CHARGE = 25
+const val MAX_SKYBRIDGE_LEVEL = 5
+const val SKYBRIDGE_DIVERSION = 0.3
 
 data class Preferences(val reducedMotion: Boolean = false, val haptics: Boolean = true)
 
@@ -26,6 +28,8 @@ data class GameState(
 	val moondew: Double = 0.0,
 	val routing: MoondewRouting = MoondewRouting.NONE,
 	val windwardLevels: List<Int> = List(WindwardStructure.entries.size) { 0 },
+	val skybridgeLevel: Int = 0,
+	val skybridgeCultivator: Cultivator? = null,
 	val taps: Long = 0L,
 	val charge: Int = 0,
 	val lastSeenMillis: Long = 0L,
@@ -78,6 +82,7 @@ enum class WindwardStructure(val title: String, val description: String, val bas
 	STAR_BEACON("Star beacon", "Guide both islands with a permanent cultivator production bonus.", 180_000.0, 2.25, 10)
 }
 
+/** Skybridges persist across dawns; only the colony's current owned count decides if a saved link is active. */
 data class IslandRateGain(val glowPerSecond: Double, val moondewPerSecond: Double)
 
 data class Research(val id: String, val title: String, val description: String, val cost: Double, val cultivator: Cultivator? = null, val requiredCount: Int = 0, val prerequisite: String? = null)
@@ -129,6 +134,8 @@ object Almanac {
 		Milestone("skyworks-terrace", "The next horizon", "Awaken the moon terrace.") { Garden.skyworkComplete(it, Skywork.MOON_TERRACE) },
 		Milestone("windward-first-build", "A second garden takes root", "Restore your first Windward structure.") { it.windwardLevels.any { level -> level > 0 } },
 		Milestone("windward-threefold", "Both islands, one sky", "Build all three Windward structures.") { it.windwardLevels.all { level -> level > 0 } },
+		Milestone("skybridge-raised", "Across the quiet sky", "Raise your first Skybridge span.") { it.skybridgeLevel > 0 },
+		Milestone("skybridge-linked", "A garden in conversation", "Connect a mainland colony to Windward Isle.") { it.skybridgeCultivator != null },
 		Milestone("billion", "A sky of your own", "Gather one billion lifetime Glow.") { it.lifetimeGlow >= 1e9 }
 	)
 }
@@ -191,17 +198,85 @@ object Garden {
 	/** An exchange rate, not an independent generator. Routing 250 Glow yields 1 Moondew before upgrades. */
 	fun moondewConversion(state: GameState) = (1.0 + windwardLevel(state, WindwardStructure.MIST_CONDENSER) * 0.35) / 250.0
 
-	/** Recover at most 40% of the Glow routed away from the garden. */
+	/** Recover at most 40% of all diverted Glow, including Skybridge transfer. */
 	fun routingRecovery(state: GameState) = windwardLevel(state, WindwardStructure.WIND_CHIMES) * 0.04
 
 	/** Star beacons boost gross production, which then feeds both routing and retained Glow. */
 	fun windwardProductionMultiplier(state: GameState) = 1.0 + windwardLevel(state, WindwardStructure.STAR_BEACON) * 0.08
 
-	/** Gross passive Glow before any routing, retained for cultivator readouts and active Firefly Wishes. */
-	fun glowRate(state: GameState) = bounded(production(state) * (1.0 - state.routing.fraction * (1.0 - routingRecovery(state))))
+	fun skybridgeActive(state: GameState) = state.skybridgeLevel > 0 && state.skybridgeCultivator?.let { state.count(it) > 0 } == true
 
-	/** Moondew accumulates only from routed passive production, including capped offline growth. */
-	fun moondewRate(state: GameState) = bounded(production(state) * state.routing.fraction * moondewConversion(state))
+	/** The linked colony produces extra Glow before its 30% Skybridge diversion. */
+	fun skybridgeProductionMultiplier(state: GameState) = 1.0 + state.skybridgeLevel * 0.15
+
+	fun skybridgeRoutedGlow(state: GameState): Double {
+		val linked = state.skybridgeCultivator ?: return 0.0
+
+		return if (skybridgeActive(state)) bounded(production(state, linked) * SKYBRIDGE_DIVERSION) else 0.0
+	}
+
+	/** Global routing applies only to production not already transferred across the Skybridge. */
+	fun totalRoutedGlow(state: GameState): Double {
+		val bridge = skybridgeRoutedGlow(state)
+
+		return bounded(bridge + (production(state) - bridge).coerceAtLeast(0.0) * state.routing.fraction)
+	}
+
+	/** Glow retained after both routing paths and the Wind chimes recovery. */
+	fun glowRate(state: GameState) = bounded(production(state) - totalRoutedGlow(state) * (1.0 - routingRecovery(state)))
+
+	/** Moondew accumulates from both transfer paths, with the same upgraded conversion rate. */
+	fun moondewRate(state: GameState) = bounded(totalRoutedGlow(state) * moondewConversion(state))
+
+	/** Preview signed differences relative to the current link, preserving tradeoffs in the UI. */
+	fun skybridgeSelectionGain(state: GameState, cultivator: Cultivator?): IslandRateGain {
+		if (state.skybridgeLevel == 0 || (cultivator != null && state.count(cultivator) == 0)) {
+			return IslandRateGain(0.0, 0.0)
+		}
+
+		val after = state.copy(skybridgeCultivator = cultivator)
+
+		return IslandRateGain(glowRate(after) - glowRate(state), moondewRate(after) - moondewRate(state))
+	}
+
+	fun skybridgeNextCost(state: GameState): Double? {
+		if (state.skybridgeLevel >= MAX_SKYBRIDGE_LEVEL) {
+			return null
+		}
+
+		return 30_000.0 * 2.6.pow(state.skybridgeLevel)
+	}
+
+	fun canBuildSkybridge(state: GameState) = windwardUnlocked(state) && skybridgeNextCost(state)?.let { state.moondew >= it } == true
+
+	fun skybridgeUpgradeGain(state: GameState): IslandRateGain {
+		if (!windwardUnlocked(state) || skybridgeNextCost(state) == null) {
+			return IslandRateGain(0.0, 0.0)
+		}
+
+		val after = state.copy(skybridgeLevel = state.skybridgeLevel + 1)
+
+		return IslandRateGain(glowRate(after) - glowRate(state), moondewRate(after) - moondewRate(state))
+	}
+
+	/** Permanent Moondew investment; no timer and no extra currency. */
+	fun buildSkybridge(state: GameState): GameState {
+		val cost = skybridgeNextCost(state) ?: return state
+		if (!canBuildSkybridge(state)) {
+			return state
+		}
+
+		return rememberMilestones(state.copy(moondew = (state.moondew - cost).coerceAtLeast(0.0), skybridgeLevel = state.skybridgeLevel + 1))
+	}
+
+	/** A single replaceable connection; a chosen colony remains remembered between dawns. */
+	fun connectSkybridge(state: GameState, cultivator: Cultivator?): GameState {
+		if (state.skybridgeLevel == 0 || state.skybridgeCultivator == cultivator || (cultivator != null && state.count(cultivator) == 0)) {
+			return state
+		}
+
+		return rememberMilestones(state.copy(skybridgeCultivator = cultivator))
+	}
 
 	fun routeMoondew(state: GameState, routing: MoondewRouting): GameState {
 		if (!windwardUnlocked(state) || state.routing == routing) {
@@ -298,8 +373,9 @@ object Garden {
 
 		val dew = if ("morning-dew" in state.research) 1.3 else 1.0
 		val charts = if ("star-charts" in state.research) 1.5 else 1.0
+		val bridge = if (state.skybridgeLevel > 0 && state.skybridgeCultivator == cultivator) skybridgeProductionMultiplier(state) else 1.0
 
-		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts * synergyMultiplier(state, cultivator) * constellationMultiplier(state, cultivator) * skyworkProductionMultiplier(state) * windwardProductionMultiplier(state))
+		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts * synergyMultiplier(state, cultivator) * constellationMultiplier(state, cultivator) * skyworkProductionMultiplier(state) * windwardProductionMultiplier(state) * bridge)
 	}
 
 	fun production(state: GameState) = bounded(Cultivator.entries.sumOf { production(state, it) })
@@ -455,6 +531,8 @@ object Garden {
 				skyworks = state.skyworks,
 				moondew = state.moondew,
 				windwardLevels = state.windwardLevels,
+				skybridgeLevel = state.skybridgeLevel,
+				skybridgeCultivator = state.skybridgeCultivator,
 				taps = state.taps,
 				lastSeenMillis = state.lastSeenMillis,
 				preferences = state.preferences

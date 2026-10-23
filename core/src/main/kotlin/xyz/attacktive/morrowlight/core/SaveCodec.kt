@@ -15,7 +15,7 @@ data class SavedGarden(val revision: Long, val state: GameState)
 object SaveCodec {
 	const val MAX_BYTES = 65_536
 	private const val MAGIC = 0x4D4F5252
-	private const val VERSION = 4
+	private const val VERSION = 5
 
 	fun encode(save: SavedGarden): ByteArray {
 		validate(save)
@@ -47,6 +47,8 @@ object SaveCodec {
 			out.writeDouble(state.moondew)
 			out.writeUTF(state.routing.name)
 			state.windwardLevels.forEach(out::writeInt)
+			out.writeInt(state.skybridgeLevel)
+			out.writeUTF(state.skybridgeCultivator?.name.orEmpty())
 		}
 
 		val payload = bytes.toByteArray()
@@ -104,7 +106,9 @@ object SaveCodec {
 				skyworks = if (version >= 3) List(Skywork.entries.size) { input.readDouble() } else List(Skywork.entries.size) { 0.0 },
 				moondew = if (version >= 4) input.readDouble() else 0.0,
 				routing = if (version >= 4) decodeMoondewRouting(input.readUTF()) else MoondewRouting.NONE,
-				windwardLevels = if (version >= 4) List(WindwardStructure.entries.size) { input.readInt() } else List(WindwardStructure.entries.size) { 0 }
+				windwardLevels = if (version >= 4) List(WindwardStructure.entries.size) { input.readInt() } else List(WindwardStructure.entries.size) { 0 },
+				skybridgeLevel = if (version >= 5) input.readInt() else 0,
+				skybridgeCultivator = if (version >= 5) decodeCultivator(input.readUTF()) else null
 			)
 
 			require(input.available() == 0) { "Unexpected save content." }
@@ -122,6 +126,14 @@ object SaveCodec {
 	}
 
 	private fun decodeMoondewRouting(name: String) = MoondewRouting.entries.firstOrNull { it.name == name } ?: throw IllegalArgumentException("Unknown Moondew route.")
+
+	private fun decodeCultivator(name: String): Cultivator? {
+		if (name.isEmpty()) {
+			return null
+		}
+
+		return Cultivator.entries.firstOrNull { it.name == name } ?: throw IllegalArgumentException("Unknown Skybridge colony.")
+	}
 
 	fun validate(save: SavedGarden) {
 		val state = save.state
@@ -143,7 +155,9 @@ object SaveCodec {
 		require(state.moondew.isFinite() && state.moondew in 0.0..MAX_GLOW)
 		require(state.windwardLevels.size == WindwardStructure.entries.size)
 		require(WindwardStructure.entries.all { it.maxLevel >= state.windwardLevels[it.ordinal] && state.windwardLevels[it.ordinal] >= 0 })
-		require(Garden.windwardUnlocked(state) || (state.moondew == 0.0 && state.routing == MoondewRouting.NONE && state.windwardLevels.all { it == 0 }))
+		require(Garden.windwardUnlocked(state) || (state.moondew == 0.0 && state.routing == MoondewRouting.NONE && state.windwardLevels.all { it == 0 } && state.skybridgeLevel == 0))
+		require(state.skybridgeLevel in 0..MAX_SKYBRIDGE_LEVEL)
+		require(state.skybridgeCultivator == null || state.skybridgeLevel > 0)
 		require(state.taps in 0 until Long.MAX_VALUE && state.charge in 0 until FIREFLY_CHARGE)
 		require(state.lastSeenMillis >= 0L)
 	}
