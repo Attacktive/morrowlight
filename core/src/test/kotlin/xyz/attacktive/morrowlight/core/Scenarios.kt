@@ -14,6 +14,7 @@ object Scenarios {
 
 	private fun funded(amount: Double = 10_000.0) = Garden.earn(GameState(), amount)
 	private fun producer(count: Int = 1) = GameState(owned = listOf(count, 0, 0, 0, 0, 0))
+	private fun windwardProducer() = funded(300_000_000.0).copy(dawns = 1, skyworks = Skywork.entries.map { it.cost }, owned = producer(10).owned)
 	private inline fun rejected(block: () -> Unit) {
 		var failed = false
 
@@ -292,6 +293,145 @@ object Scenarios {
 			check(!Garden.skyworkComplete(project, Skywork.LANTERN_BRIDGE))
 			check(Garden.contributeSkywork(project, Skywork.LANTERN_BRIDGE, Contribution.HALF) == project)
 		},
+		"Windward remains locked until the Moon Terrace is fully restored" to {
+			val before = funded(300_000_000.0).copy(dawns = 1)
+			check(!Garden.windwardUnlocked(before))
+			check(Garden.routeMoondew(before, MoondewRouting.HALF) == before)
+			val terrace = before.copy(skyworks = Skywork.entries.map { it.cost })
+			check(Garden.windwardUnlocked(terrace))
+			check(Garden.routeMoondew(terrace, MoondewRouting.HALF).routing == MoondewRouting.HALF)
+			val inadequate = terrace.copy(skyworks = listOf(Skywork.LANTERN_BRIDGE.cost, Skywork.WINDMILLS.cost, Skywork.MOON_TERRACE.cost - 1.0))
+			check(!Garden.windwardUnlocked(inadequate))
+		},
+		"Routing divides only passive Glow and leaves tap bonuses intact" to {
+			val home = windwardProducer()
+			val gross = Garden.production(home)
+			check(gross > 0.0)
+			close(gross, Garden.glowRate(home))
+			close(0.0, Garden.moondewRate(home))
+			for (option in MoondewRouting.entries) {
+				val routed = Garden.routeMoondew(home, option)
+				close(gross * (1.0 - option.fraction), Garden.glowRate(routed))
+				close(gross * option.fraction / 250.0, Garden.moondewRate(routed))
+				close(Garden.tapValue(home), Garden.tapValue(routed))
+				close(home.glow, routed.glow)
+				close(home.runGlow, routed.runGlow)
+			}
+
+			check(Garden.routeMoondew(Garden.routeMoondew(home, MoondewRouting.HALF), MoondewRouting.NONE) == home)
+		},
+		"Routing earns Moondew and keeps earned Glow accounting honest" to {
+			val ready = windwardProducer().copy(glow = 0.0)
+			val routed = Garden.routeMoondew(ready, MoondewRouting.HALF)
+			val gained = Garden.tick(routed, 60.0)
+			close(Garden.production(routed) * 30.0, gained.glow)
+			close(Garden.moondewRate(routed) * 60.0, gained.moondew)
+			close(ready.runGlow + gained.glow, gained.runGlow)
+			close(ready.lifetimeGlow + gained.glow, gained.lifetimeGlow)
+			check(gained.windwardLevels == ready.windwardLevels)
+			check(Garden.tick(gained, Double.NaN) == gained)
+		},
+		"Moondew continues offline without double-paying on resume" to {
+			val ready = Garden.routeMoondew(windwardProducer().copy(glow = 0.0, lastSeenMillis = 1_000L), MoondewRouting.THREE_QUARTERS)
+			val grown = Garden.offline(ready, 100_000_000L)
+			check(grown.capped && grown.seconds == 28_800L)
+			close(Garden.glowRate(ready) * 28_800, grown.earned)
+			close(Garden.moondewRate(ready) * 28_800, grown.moondewEarned)
+			close(0.0, Garden.offline(grown.state, 100_000_000L).moondewEarned)
+			val clock = PlayClock()
+			val resumed = clock.enter(ready, 61_000, 500)
+			check(resumed.moondewEarned > 0.0)
+			close(0.0, clock.enter(resumed.state, 61_000, 500).moondewEarned)
+		},
+		"Windward structures cost Moondew and never overspend the account" to {
+			val ready = windwardProducer().copy(moondew = 20_000.0)
+			val condenser = WindwardStructure.MIST_CONDENSER
+			check(Garden.canBuildWindward(ready, condenser))
+			close(20_000.0, Garden.windwardNextCost(ready, condenser)!!)
+			val built = Garden.buildWindward(ready, condenser)
+			close(0.0, built.moondew)
+			check(Garden.windwardLevel(built, condenser) == 1)
+			check(!Garden.canBuildWindward(built, condenser))
+			check(Garden.buildWindward(built, condenser) == built)
+			check(ready.glow == built.glow && ready.runGlow == built.runGlow && ready.lifetimeGlow == built.lifetimeGlow)
+			check("windward-first-build" in built.milestones)
+		},
+		"Mist condenser raises Moondew conversion but does not mint Glow" to {
+			val base = Garden.routeMoondew(windwardProducer().copy(moondew = 100_000.0), MoondewRouting.HALF)
+			val built = Garden.buildWindward(base, WindwardStructure.MIST_CONDENSER)
+			close(Garden.moondewRate(base) * 1.35, Garden.moondewRate(built))
+			close(Garden.glowRate(base), Garden.glowRate(built))
+			val gain = Garden.windwardGain(base, WindwardStructure.MIST_CONDENSER)
+			close(0.0, gain.glowPerSecond)
+			close(Garden.moondewRate(built) - Garden.moondewRate(base), gain.moondewPerSecond)
+		},
+		"Wind chimes return routed Glow without reducing Moondew" to {
+			val ready = Garden.routeMoondew(windwardProducer().copy(moondew = 100_000.0), MoondewRouting.THREE_QUARTERS)
+			val chimes = Garden.buildWindward(ready, WindwardStructure.WIND_CHIMES)
+			close(0.04, Garden.routingRecovery(chimes))
+			close(Garden.moondewRate(ready), Garden.moondewRate(chimes))
+			close(Garden.production(ready) * (1.0 - 0.75 * 0.96), Garden.glowRate(chimes))
+			val gain = Garden.windwardGain(ready, WindwardStructure.WIND_CHIMES)
+			close(Garden.glowRate(chimes) - Garden.glowRate(ready), gain.glowPerSecond)
+			close(0.0, gain.moondewPerSecond)
+		},
+		"Star beacon boosts production on both shores without recursion" to {
+			val ready = Garden.routeMoondew(windwardProducer().copy(moondew = 200_000.0), MoondewRouting.QUARTER)
+			val beacon = Garden.buildWindward(ready, WindwardStructure.STAR_BEACON)
+			close(1.08, Garden.windwardProductionMultiplier(beacon))
+			close(Garden.production(ready) * 1.08, Garden.production(beacon))
+			close(Garden.glowRate(ready) * 1.08, Garden.glowRate(beacon))
+			close(Garden.moondewRate(ready) * 1.08, Garden.moondewRate(beacon))
+		},
+		"Island purchases retain permanent effects and Moondew after dawn" to {
+			val ready = windwardProducer().copy(moondew = 300_000.0)
+			val condenser = Garden.buildWindward(ready, WindwardStructure.MIST_CONDENSER)
+			val beacon = Garden.buildWindward(condenser, WindwardStructure.STAR_BEACON)
+			val routed = Garden.routeMoondew(beacon, MoondewRouting.HALF)
+			val reset = Garden.prestige(routed)
+			close(beacon.moondew, reset.moondew)
+			check(reset.windwardLevels == beacon.windwardLevels)
+			check(reset.routing == MoondewRouting.NONE)
+			check(reset.owned.sum() == 0 && reset.glow == 0.0)
+			check(reset.skyworks == ready.skyworks)
+			check(Garden.windwardProductionMultiplier(reset) == Garden.windwardProductionMultiplier(beacon))
+			check(Garden.moondewRate(reset) == 0.0)
+		},
+		"Island rate previews agree with actual structure purchases" to {
+			val ready = Garden.routeMoondew(windwardProducer().copy(moondew = 1_000_000.0), MoondewRouting.HALF)
+			for (structure in WindwardStructure.entries) {
+				val preview = Garden.windwardGain(ready, structure)
+				val bought = Garden.buildWindward(ready, structure)
+				check(bought != ready)
+				close(Garden.glowRate(bought) - Garden.glowRate(ready), preview.glowPerSecond)
+				close(Garden.moondewRate(bought) - Garden.moondewRate(ready), preview.moondewPerSecond)
+			}
+		},
+		"All structures cap their upgrade levels and costs" to {
+			var state = windwardProducer().copy(moondew = 1e15)
+			for (structure in WindwardStructure.entries) {
+				repeat(structure.maxLevel) {
+					check(Garden.canBuildWindward(state, structure))
+					state = Garden.buildWindward(state, structure)
+				}
+
+				check(Garden.windwardLevel(state, structure) == structure.maxLevel)
+				check(Garden.windwardNextCost(state, structure) == null)
+				check(!Garden.canBuildWindward(state, structure))
+				check(Garden.buildWindward(state, structure) == state)
+			}
+
+			close(0.4, Garden.routingRecovery(state))
+			close(1.8, Garden.windwardProductionMultiplier(state))
+			check("windward-threefold" in state.milestones)
+		},
+		"Cultivator investment payback uses retained production during routing" to {
+			val state = Garden.routeMoondew(windwardProducer().copy(glow = 100_000.0), MoondewRouting.HALF)
+			val gain = Garden.productionGain(state, Cultivator.GLOWCAP, 1)
+			val after = state.copy(owned = listOf(11, 0, 0, 0, 0, 0))
+			close(Garden.glowRate(after) - Garden.glowRate(state), gain)
+			close((Garden.production(after) - Garden.production(state)) * 0.5, gain)
+		},
 		"Prestige cannot be claimed twice without growing" to {
 			val fresh = Garden.prestige(funded(1_000_000.0))
 			check(Garden.prestige(fresh) == fresh)
@@ -333,6 +473,32 @@ object Scenarios {
 				rejected { SaveCodec.encode(SavedGarden(1, state)) }
 			}
 		},
+		"Version 4 saves preserve routing, structures, and Moondew" to {
+			val state = Garden.routeMoondew(windwardProducer().copy(moondew = 2_000_000.0), MoondewRouting.THREE_QUARTERS)
+			val planted = Garden.buildWindward(Garden.buildWindward(state, WindwardStructure.MIST_CONDENSER), WindwardStructure.WIND_CHIMES)
+			val save = SavedGarden(92, planted)
+			check(SaveCodec.decode(SaveCodec.encode(save)) == save)
+			check(SaveCodec.decode(SaveCodec.encode(save)).state.routing == MoondewRouting.THREE_QUARTERS)
+		},
+		"Invalid Windward saves reject routing, costs, and levels" to {
+			val ready = windwardProducer()
+			val invalid = listOf(
+				GameState(routing = MoondewRouting.HALF),
+				GameState(moondew = 12.0),
+				GameState(windwardLevels = listOf(1, 0, 0)),
+				ready.copy(moondew = Double.NaN),
+				ready.copy(moondew = Double.POSITIVE_INFINITY),
+				ready.copy(moondew = -1.0),
+				ready.copy(windwardLevels = listOf(0, 1)),
+				ready.copy(windwardLevels = listOf(0, 1, -1)),
+				ready.copy(windwardLevels = listOf(0, 11, 0)),
+				ready.copy(skyworks = listOf(Skywork.LANTERN_BRIDGE.cost, Skywork.WINDMILLS.cost, 0.0), routing = MoondewRouting.QUARTER)
+			)
+
+			for (state in invalid) {
+				rejected { SaveCodec.encode(SavedGarden(1, state)) }
+			}
+		},
 		"Save codec round trips every field" to {
 			val state = funded(1e12).copy(owned = listOf(10, 4, 2, 1, 0, 0), research = setOf("gentle-hands", "morning-dew"), dawnSeeds = 123, dawns = 4, constellation = Constellation.SKY_WEAVE, taps = 88, charge = 3, lastSeenMillis = 42, preferences = Preferences(reducedMotion = true, haptics = false))
 			val save = SavedGarden(91, state)
@@ -352,21 +518,26 @@ object Scenarios {
 				rejected { SaveCodec.encode(SavedGarden(1, GameState(glow = number))) }
 			}
 		},
-		"Version 1 and 2 saves migrate without losing the garden" to {
+		"Version 1, 2 and 3 checkpoints migrate into Windward without losing progress" to {
 			val saved = SavedGarden(9, funded(12_345.0).copy(dawns = 2, dawnSeeds = 3))
 			val encoded = SaveCodec.encode(saved)
 			val payload = encoded.copyOfRange(0, encoded.size - 32)
-			val previous = payload.copyOfRange(0, payload.size - Skywork.entries.size * 8)
-			previous[7] = 2
-			val v2 = previous + MessageDigest.getInstance("SHA-256").digest(previous)
+			val windwardTailSize = 8 + 2 + MoondewRouting.NONE.name.length + WindwardStructure.entries.size * 4
+			val previous = payload.copyOfRange(0, payload.size - windwardTailSize)
+			previous[7] = 3
+			val v3 = previous + MessageDigest.getInstance("SHA-256").digest(previous)
+			check(SaveCodec.decode(v3) == saved)
+			val second = previous.copyOfRange(0, previous.size - Skywork.entries.size * 8)
+			second[7] = 2
+			val v2 = second + MessageDigest.getInstance("SHA-256").digest(second)
 			check(SaveCodec.decode(v2) == saved)
-			val first = previous.copyOfRange(0, previous.size - 2)
+			val first = second.copyOfRange(0, second.size - 2)
 			first[7] = 1
 			val v1 = first + MessageDigest.getInstance("SHA-256").digest(first)
 			check(SaveCodec.decode(v1) == saved)
 			val attuned = saved.copy(state = saved.state.copy(constellation = Constellation.UNDERSTORY))
 			val current = SaveCodec.encode(attuned)
-			val attunedPayload = current.copyOfRange(0, current.size - 32 - Skywork.entries.size * 8)
+			val attunedPayload = current.copyOfRange(0, current.size - 32 - windwardTailSize - Skywork.entries.size * 8)
 			attunedPayload[7] = 2
 			check(SaveCodec.decode(attunedPayload + MessageDigest.getInstance("SHA-256").digest(attunedPayload)) == attuned)
 		},
@@ -376,7 +547,7 @@ object Scenarios {
 		"Unknown save schemas are rejected, not reset" to {
 			val bytes = SaveCodec.encode(SavedGarden(1, GameState()))
 			val payload = bytes.copyOfRange(0, bytes.size - 32)
-			payload[7] = 4
+			payload[7] = 5
 			try {
 				SaveCodec.decode(payload + MessageDigest.getInstance("SHA-256").digest(payload))
 				error("Expected version rejection")
@@ -472,6 +643,16 @@ object Scenarios {
 			check(GardenArt.scene(terrace).size > GardenArt.scene(windmills).size)
 			check(GardenArt.scene(Garden.prestige(terrace)).containsAll(GardenArt.scene(terrace)))
 		},
+		"Windward artwork responds to structures and remains deterministic" to {
+			val untouched = windwardProducer()
+			val restored = untouched.copy(windwardLevels = listOf(1, 2, 5))
+			val original = WindwardArt.scene(untouched)
+			val progressed = WindwardArt.scene(restored)
+			check(progressed.size > original.size)
+			check(WindwardArt.scene(restored) == WindwardArt.scene(restored.copy(moondew = 1000.0, routing = MoondewRouting.HALF)))
+			check(progressed == WindwardArt.scene(restored))
+			check(progressed.any { it is GardenMark.Shape && it.color == 0xFF7AA5A5 })
+		},
 		"Garden illustration is deterministic across recompositions" to {
 			val state = GameState(owned = listOf(18, 12, 6, 3, 2, 1))
 			check(GardenArt.scene(state) == GardenArt.scene(state))
@@ -481,7 +662,7 @@ object Scenarios {
 			var state = GameState()
 
 			repeat(10_000) {
-				state = when (random.nextInt(8)) {
+				state = when (random.nextInt(10)) {
 					0 -> Garden.tap(state)
 					1 -> Garden.tick(state, random.nextDouble(0.0, 1_000.0))
 					2 -> Garden.buy(state, Cultivator.entries[random.nextInt(6)], listOf(1, 10, 1_000)[random.nextInt(3)])
@@ -489,6 +670,8 @@ object Scenarios {
 					4 -> Garden.prestige(state)
 					5 -> Garden.attune(state, Constellation.entries[random.nextInt(Constellation.entries.size)])
 					6 -> Garden.contributeSkywork(state, Skywork.entries[random.nextInt(Skywork.entries.size)], Contribution.entries[random.nextInt(Contribution.entries.size)])
+					7 -> Garden.routeMoondew(state, MoondewRouting.entries[random.nextInt(MoondewRouting.entries.size)])
+					8 -> Garden.buildWindward(state, WindwardStructure.entries[random.nextInt(WindwardStructure.entries.size)])
 					else -> SaveCodec.decode(SaveCodec.encode(SavedGarden(1, state))).state
 				}
 
