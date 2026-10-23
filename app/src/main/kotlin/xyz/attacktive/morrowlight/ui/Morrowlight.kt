@@ -72,6 +72,7 @@ import xyz.attacktive.morrowlight.GardenViewModel
 import xyz.attacktive.morrowlight.core.Almanac
 import xyz.attacktive.morrowlight.core.BuyAmount
 import xyz.attacktive.morrowlight.core.Constellation
+import xyz.attacktive.morrowlight.core.Contribution
 import xyz.attacktive.morrowlight.core.Cultivator
 import xyz.attacktive.morrowlight.core.Display
 import xyz.attacktive.morrowlight.core.FIREFLY_CHARGE
@@ -81,6 +82,7 @@ import xyz.attacktive.morrowlight.core.MAX_OWNED
 import xyz.attacktive.morrowlight.core.PRESTIGE_THRESHOLD
 import xyz.attacktive.morrowlight.core.Preferences
 import xyz.attacktive.morrowlight.core.Research
+import xyz.attacktive.morrowlight.core.Skywork
 
 private val chapterNames = listOf("A spark in the quiet", "Small things, growing", "The moon takes root", "Between earth and sky", "The stars came home", "A morning worth making")
 private val chapterNotes = listOf("Even the longest night begins to end somewhere.", "Your little patch of dark is becoming a garden.", "Silver leaves. Golden lanterns. Room to breathe.", "The island is learning how to hold the sky.", "You made a home for something extraordinary.", "Let this light become the seed of another dawn.")
@@ -90,7 +92,19 @@ fun Morrowlight(model: GardenViewModel) {
 	val ui by model.ui.collectAsStateWithLifecycle()
 
 	MorrowTheme {
-		GardenApp(ui, model::tap, model::buy, model::research, model::prestige, model::attune, model::preferences, model::dismissOffline, model::dismissRecovery, model::load)
+		GardenApp(
+			ui = ui,
+			onTap = model::tap,
+			onBuy = model::buy,
+			onResearch = model::research,
+			onPrestige = model::prestige,
+			onAttune = model::attune,
+			onContribute = model::contributeSkywork,
+			onPreferences = model::preferences,
+			onDismissOffline = model::dismissOffline,
+			onDismissRecovery = model::dismissRecovery,
+			onRetry = model::load
+		)
 	}
 }
 
@@ -102,6 +116,7 @@ private fun GardenApp(
 	onResearch: (String) -> Unit,
 	onPrestige: () -> Unit,
 	onAttune: (Constellation) -> Unit,
+	onContribute: (Skywork, Contribution) -> Unit,
 	onPreferences: (Preferences) -> Unit,
 	onDismissOffline: () -> Unit,
 	onDismissRecovery: () -> Unit,
@@ -127,7 +142,7 @@ private fun GardenApp(
 		containerColor = Night,
 		bottomBar = {
 			NavigationBar(containerColor = Night, tonalElevation = 0.dp) {
-				listOf("Garden" to Symbol.SEED, "Cultivate" to Symbol.GROW, "Dawn" to Symbol.SUN).forEachIndexed { index, (label, symbol) ->
+				listOf("Garden" to Symbol.SEED, "Cultivate" to Symbol.GROW, "Skyworks" to Symbol.BRIDGE, "Dawn" to Symbol.SUN).forEachIndexed { index, (label, symbol) ->
 					NavigationBarItem(
 						selected = tab == index, onClick = { tab = index },
 						icon = { Glyph(symbol = symbol, color = if (tab == index) Mint else Muted) },
@@ -176,7 +191,8 @@ private fun GardenApp(
 						when (tab) {
 							0 -> GardenHome(state, ui.active, touch)
 							1 -> CultivateScreen(state, onBuy, onResearch)
-							2 -> DawnScreen(state, { confirmDawn = true }) { pendingConstellation = it }
+							2 -> SkyworksScreen(state, onContribute)
+							3 -> DawnScreen(state, { confirmDawn = true }) { pendingConstellation = it }
 						}
 					}
 				}
@@ -194,7 +210,7 @@ private fun GardenApp(
 		AlertDialog(
 			onDismissRequest = { confirmDawn = false }, icon = { Glyph(symbol = Symbol.SUN, color = Gold) },
 			title = { Text("Begin again, brighter.", fontFamily = FontFamily.Serif) },
-			text = { Text("Receive $reward Dawn Seed${if (reward == 1L) "" else "s"}. Your Glow, cultivators, research, and firefly charge reset. All Dawn Seeds, memories, lifetime Glow, and settings stay with you.") },
+			text = { Text("Receive $reward Dawn Seed${if (reward == 1L) "" else "s"}. Your Glow, cultivators, research, and firefly charge reset. All Dawn Seeds, Skyworks restorations, memories, lifetime Glow, and settings stay with you.") },
 			confirmButton = {
 				TextButton(onClick = {
 					onPrestige()
@@ -296,6 +312,11 @@ private fun GardenHome(state: GameState, active: Boolean, onGather: (Boolean) ->
 			}
 		}
 
+		if (state.dawns > 0) {
+			val restored = Skywork.entries.count { Garden.skyworkComplete(state, it) }
+			item { Text("Skyworks: $restored of ${Skywork.entries.size} restorations complete. Every contribution survives the next dawn.", color = Gold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+		}
+
 		if (state.dawns > 0 && state.constellation == null) {
 			item { Text("A new constellation awaits in Dawn. Choose a path for this garden.", color = Gold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
 		}
@@ -356,6 +377,10 @@ private fun Balance(state: GameState) {
 			if (state.dawnSeeds > 0) {
 				Text("${Display.number(Garden.seedMultiplier(state))}x dawn bonus", color = Gold, fontSize = 12.sp)
 			}
+		}
+
+		if (Garden.skyworkComplete(state, Skywork.WINDMILLS)) {
+			Text("Restored windmills: +15% permanent production", color = Gold, fontSize = 12.sp)
 		}
 	}
 }
@@ -530,6 +555,97 @@ private fun ResearchCard(state: GameState, research: Research, onResearch: () ->
 	}
 }
 
+
+@Composable
+private fun SkyworksScreen(state: GameState, onContribute: (Skywork, Contribution) -> Unit) {
+	var contributionIndex by rememberSaveable { mutableIntStateOf(0) }
+	val contribution = Contribution.entries[contributionIndex]
+	val finished = Skywork.entries.count { Garden.skyworkComplete(state, it) }
+
+	LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+		item {
+			Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+				Box(Modifier.size(80.dp).background(Lilac.copy(alpha = 0.09f), CircleShape), contentAlignment = Alignment.Center) { Glyph(Modifier.size(42.dp), Symbol.BRIDGE, Lilac) }
+				Text("A path beyond the stars.", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
+				Text("Restore what the night has forgotten. Every Glow you contribute stays invested across dawns.", color = Muted, textAlign = TextAlign.Center)
+			}
+		}
+
+		if (state.dawns == 0) {
+			item {
+				CardBox {
+					Text("AWAITING THE FIRST DAWN", style = MaterialTheme.typography.labelSmall, color = Gold)
+					Text("The faraway lanterns will reveal themselves after you restore your first dawn.", color = Muted)
+				}
+			}
+		} else {
+			item { SectionHeading("Skyworks", "$finished of ${Skywork.entries.size} restorations complete") }
+
+			item {
+				CardBox {
+					Text("CHOOSE A CONTRIBUTION", style = MaterialTheme.typography.labelSmall, color = Gold)
+					Text("Decide how much of your current Glow goes toward restoration instead of cultivators or research.", color = Muted)
+					Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+						Contribution.entries.forEachIndexed { index, option ->
+							FilterChip(selected = contributionIndex == index, onClick = { contributionIndex = index }, label = { Text(option.title) })
+						}
+					}
+					Text("10%, 50%, or all of your available Glow, capped by the unfinished project. Partial investments are permanent and cannot be refunded.", color = Muted, fontSize = 12.sp)
+				}
+			}
+
+			items(Skywork.entries, key = { it.name }) { work ->
+				val restored = Garden.skyworkProgress(state, work)
+				val remaining = (work.cost - restored).coerceAtLeast(0.0)
+				val complete = Garden.skyworkComplete(state, work)
+				val available = Garden.skyworkAvailable(state, work)
+
+				CardBox {
+					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+						Glyph(symbol = if (complete) Symbol.SPARK else Symbol.BRIDGE, color = if (complete) Gold else Lilac)
+						Text(work.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+						if (complete) {
+							Text("RESTORED", color = Mint, style = MaterialTheme.typography.labelSmall)
+						}
+					}
+
+					Text(work.description, color = Muted)
+					LinearProgressIndicator(progress = { (restored / work.cost).coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape), color = Gold, trackColor = Hairline)
+					Text("${Display.number(restored)} / ${Display.number(work.cost)} Glow contributed", color = Ink, fontSize = 12.sp)
+					Text(work.reward, color = if (complete) Mint else Muted, fontSize = 12.sp)
+
+					if (available) {
+						val quote = Garden.skyworkQuote(state, work, contribution)
+						val afterAvailable = (remaining - state.glow).coerceAtLeast(0.0)
+						val rate = Garden.production(state)
+						val estimate = when {
+							afterAvailable == 0.0 -> "You already hold enough Glow to complete this project."
+							rate > 0.0 -> "At current production, around ${Display.payback(afterAvailable, rate)} to earn the Glow still needed, assuming you invest your current balance."
+							else -> "Grow some cultivators to estimate the time to completion."
+						}
+
+						Text(estimate, color = Gold, fontSize = 12.sp)
+						Button(onClick = { onContribute(work, contribution) }, enabled = quote > 0.0, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp), colors = ButtonDefaults.buttonColors(containerColor = Mint, contentColor = Night)) {
+							Text("Contribute ${Display.number(quote)} Glow")
+						}
+					} else if (!complete) {
+						Text("Restore ${Skywork.entries[work.ordinal - 1].title.lowercase()} first.", color = Lilac, fontSize = 12.sp)
+					}
+				}
+			}
+
+			if (finished == Skywork.entries.size) {
+				item {
+					CardBox {
+						Text("ALL LIGHTS RESTORED", color = Gold, style = MaterialTheme.typography.labelSmall)
+						Text("The next island is ready for a future update. Until then, your restored bonuses and memories remain yours.", color = Muted)
+					}
+				}
+			}
+		}
+	}
+}
+
 @Composable
 private fun DawnScreen(state: GameState, onPrestige: () -> Unit, onAttune: (Constellation) -> Unit) {
 	val reward = Garden.prestigeReward(state)
@@ -590,7 +706,7 @@ private fun DawnScreen(state: GameState, onPrestige: () -> Unit, onAttune: (Cons
 					Text("Restore the dawn")
 				}
 
-				Text("Resets this garden's Glow, cultivators, and research. Your seeds and memories remain. You will confirm before anything resets.", color = Muted, fontSize = 12.sp)
+				Text("Resets this garden's Glow, cultivators, and research. Your seeds, Skyworks restorations, and memories remain. You will confirm before anything resets.", color = Muted, fontSize = 12.sp)
 			}
 		}
 
@@ -716,6 +832,7 @@ private fun FirstLightPreview() {
 			onResearch = {},
 			onPrestige = {},
 			onAttune = {},
+			onContribute = { _, _ -> },
 			onPreferences = {},
 			onDismissOffline = {},
 			onDismissRecovery = {},
@@ -736,6 +853,7 @@ private fun LivingGardenPreview() {
 			onResearch = {},
 			onPrestige = {},
 			onAttune = {},
+			onContribute = { _, _ -> },
 			onPreferences = {},
 			onDismissOffline = {},
 			onDismissRecovery = {},

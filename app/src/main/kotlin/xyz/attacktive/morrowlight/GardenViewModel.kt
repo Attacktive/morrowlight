@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import xyz.attacktive.morrowlight.core.BuyAmount
 import xyz.attacktive.morrowlight.core.Constellation
+import xyz.attacktive.morrowlight.core.Contribution
 import xyz.attacktive.morrowlight.core.Cultivator
 import xyz.attacktive.morrowlight.core.GameState
 import xyz.attacktive.morrowlight.core.Garden
@@ -20,6 +21,7 @@ import xyz.attacktive.morrowlight.core.LoadResult
 import xyz.attacktive.morrowlight.core.OfflineGrowth
 import xyz.attacktive.morrowlight.core.PlayClock
 import xyz.attacktive.morrowlight.core.Preferences
+import xyz.attacktive.morrowlight.core.Skywork
 
 data class GardenUiState(val garden: GameState = GameState(), val loading: Boolean = true, val loadError: String? = null, val saveError: String? = null, val recovered: Boolean = false, val offline: OfflineGrowth? = null, val active: Boolean = false)
 
@@ -124,6 +126,8 @@ class GardenViewModel(application: Application): AndroidViewModel(application) {
 	fun prestige() = change { Garden.prestige(it) }
 
 	fun attune(constellation: Constellation) = change { Garden.attune(it, constellation) }
+
+	fun contributeSkywork(work: Skywork, contribution: Contribution) = change { Garden.contributeSkywork(it, work, contribution) }
 
 	fun preferences(preferences: Preferences) = change { it.copy(preferences = preferences) }
 
