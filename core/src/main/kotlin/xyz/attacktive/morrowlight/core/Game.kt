@@ -22,6 +22,7 @@ data class GameState(
 	val dawnSeeds: Long = 0L,
 	val dawns: Int = 0,
 	val constellation: Constellation? = null,
+	val skyworks: List<Double> = List(Skywork.entries.size) { 0.0 },
 	val taps: Long = 0L,
 	val charge: Int = 0,
 	val lastSeenMillis: Long = 0L,
@@ -44,6 +45,19 @@ enum class Constellation(val title: String, val description: String) {
 	MOON_TIDE("Moon tide", "Firefly havens and Moonwillows produce 2x, but Glowcaps produce 30% less."),
 	SKY_WEAVE("Sky weave", "Cloud looms and Starwells produce 2x, but Lantern lilies produce 30% less."),
 	FIREFLY_CHORUS("Firefly chorus", "Firefly Wishes give 45 seconds of production instead of 15, but all cultivators produce 15% less.")
+}
+
+/** Ordered, one-time restorations. The enum order is part of the v3 save schema. */
+enum class Skywork(val title: String, val description: String, val cost: Double, val reward: String) {
+	LANTERN_BRIDGE("Light the bridge", "Carry light beyond the garden's edge.", 5_000_000.0, "A permanent lantern bridge appears in the garden."),
+	WINDMILLS("Restore the windmills", "Wake the wind that turns the distant mills.", 30_000_000.0, "All cultivators permanently produce 15% more Glow."),
+	MOON_TERRACE("Awaken the terrace", "Prepare a quiet landing for the neighboring island.", 180_000_000.0, "Base touch Glow permanently increases by 20%. The neighboring island will arrive in a future update.")
+}
+
+enum class Contribution(val fraction: Double, val title: String) {
+	TENTH(0.1, "10%"),
+	HALF(0.5, "50%"),
+	ALL(1.0, "All")
 }
 
 data class Research(val id: String, val title: String, val description: String, val cost: Double, val cultivator: Cultivator? = null, val requiredCount: Int = 0, val prerequisite: String? = null)
@@ -90,6 +104,9 @@ object Almanac {
 		Milestone("ten-seeds", "Keeper of mornings", "Collect 10 permanent Dawn Seeds.") { it.dawnSeeds >= 10 },
 		Milestone("network", "We grow together", "Grow ten Glowcaps alongside a Lantern lily after your first dawn.") { it.dawns > 0 && it.count(Cultivator.GLOWCAP) >= 10 && it.count(Cultivator.LANTERN_LILY) > 0 },
 		Milestone("constellation", "Written in starlight", "Follow your first constellation.") { it.constellation != null },
+		Milestone("skyworks-bridge", "A path through the night", "Complete the lantern bridge.") { Garden.skyworkComplete(it, Skywork.LANTERN_BRIDGE) },
+		Milestone("skyworks-windmills", "The wind remembers", "Restore the windmills.") { Garden.skyworkComplete(it, Skywork.WINDMILLS) },
+		Milestone("skyworks-terrace", "The next horizon", "Awaken the moon terrace.") { Garden.skyworkComplete(it, Skywork.MOON_TERRACE) },
 		Milestone("billion", "A sky of your own", "Gather one billion lifetime Glow.") { it.lifetimeGlow >= 1e9 }
 	)
 }
@@ -107,6 +124,43 @@ enum class BuyAmount(val limit: Int, val label: String) {
 /** Pure, deterministic rules. Android clocks, rendering, and storage live outside this object. */
 object Garden {
 	fun seedMultiplier(state: GameState) = 1.0 + state.dawnSeeds * 0.15
+
+	fun skyworkProgress(state: GameState, work: Skywork) = state.skyworks[work.ordinal]
+
+	fun skyworkComplete(state: GameState, work: Skywork) = skyworkProgress(state, work) >= work.cost
+
+	fun skyworkAvailable(state: GameState, work: Skywork) = state.dawns > 0 &&
+		!skyworkComplete(state, work) &&
+		(work.ordinal == 0 || skyworkComplete(state, Skywork.entries[work.ordinal - 1]))
+
+	/** Quotes a fraction of currently held Glow, capped by the current project's remaining cost. */
+	fun skyworkQuote(state: GameState, work: Skywork, contribution: Contribution): Double {
+		if (!skyworkAvailable(state, work)) {
+			return 0.0
+		}
+
+		val available = if (contribution == Contribution.ALL) state.glow else floor(state.glow * contribution.fraction)
+		val remaining = (work.cost - skyworkProgress(state, work)).coerceAtLeast(0.0)
+
+		return minOf(available, remaining, state.glow).coerceAtLeast(0.0)
+	}
+
+	/** Contributions are permanent, never counted as new earnings, and never refunded by prestige. */
+	fun contributeSkywork(state: GameState, work: Skywork, contribution: Contribution): GameState {
+		val amount = skyworkQuote(state, work, contribution)
+		if (amount <= 0.0) {
+			return state
+		}
+
+		val progress = state.skyworks.toMutableList()
+		progress[work.ordinal] = (progress[work.ordinal] + amount).coerceAtMost(work.cost)
+
+		return rememberMilestones(state.copy(glow = (state.glow - amount).coerceAtLeast(0.0), skyworks = progress.toList()))
+	}
+
+	fun skyworkProductionMultiplier(state: GameState) = if (skyworkComplete(state, Skywork.WINDMILLS)) 1.15 else 1.0
+
+	fun skyworkTouchMultiplier(state: GameState) = if (skyworkComplete(state, Skywork.MOON_TERRACE)) 1.2 else 1.0
 
 	/** Extra production earned by growing supporting cultivators, including when the supported colony is purchased first. */
 	fun synergyMultiplier(state: GameState, cultivator: Cultivator) = when {
@@ -153,7 +207,7 @@ object Garden {
 		val dew = if ("morning-dew" in state.research) 1.3 else 1.0
 		val charts = if ("star-charts" in state.research) 1.5 else 1.0
 
-		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts * synergyMultiplier(state, cultivator) * constellationMultiplier(state, cultivator))
+		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts * synergyMultiplier(state, cultivator) * constellationMultiplier(state, cultivator) * skyworkProductionMultiplier(state))
 	}
 
 	fun production(state: GameState) = bounded(Cultivator.entries.sumOf { production(state, it) })
@@ -175,7 +229,7 @@ object Garden {
 		val hands = if ("gentle-hands" in state.research) 2.0 else 1.0
 		val keeper = if ("ember-keeper" in state.research) 4.0 else 1.0
 
-		return bounded(hands * keeper * seedMultiplier(state) + production(state) * 0.04)
+		return bounded(hands * keeper * seedMultiplier(state) * skyworkTouchMultiplier(state) + production(state) * 0.04)
 	}
 
 	fun tap(state: GameState): GameState {
@@ -301,6 +355,7 @@ object Garden {
 				lifetimeGlow = state.lifetimeGlow,
 				dawnSeeds = state.dawnSeeds + reward,
 				dawns = (state.dawns + 1).coerceAtMost(Int.MAX_VALUE - 1),
+				skyworks = state.skyworks,
 				taps = state.taps,
 				lastSeenMillis = state.lastSeenMillis,
 				preferences = state.preferences
