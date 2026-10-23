@@ -414,9 +414,18 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 		}
 	}
 
+	LaunchedEffect(section) {
+		listState.scrollToItem(0)
+	}
+
 	Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
 		Box(Modifier.padding(top = 20.dp, bottom = 14.dp)) {
 			Balance(state)
+		}
+
+		Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+			FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Cultivators") })
+			FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("Research") })
 		}
 
 		LazyColumn(
@@ -426,13 +435,6 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 			contentPadding = PaddingValues(bottom = 20.dp),
 			verticalArrangement = Arrangement.spacedBy(14.dp)
 		) {
-			item {
-				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-					FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Cultivators") })
-					FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("Research") })
-				}
-			}
-
 			if (section == 0) {
 				item {
 					Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -604,8 +606,16 @@ private fun WindwardScreen(
 	modifier: Modifier
 ) {
 	val unlocked = Garden.windwardUnlocked(state)
+	val listState = rememberLazyListState()
+	var purchasing by remember { mutableStateOf(false) }
 
-	LazyColumn(modifier = modifier, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+	LaunchedEffect(purchasing) {
+		if (purchasing) {
+			listState.stopScroll()
+		}
+	}
+
+	LazyColumn(modifier = modifier, state = listState, userScrollEnabled = !purchasing, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
 		item {
 			Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
 				Text("Windward Isle", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
@@ -657,7 +667,7 @@ private fun WindwardScreen(
 				}
 			}
 
-			item { SectionHeading("Island structures", "Spend Moondew to permanently improve your two-island economy.") }
+			item { SectionHeading("Island structures", "Spend Moondew to improve both islands. Hold Build to upgrade repeatedly.") }
 
 			items(WindwardStructure.entries, key = { it.name }) { structure ->
 				val level = Garden.windwardLevel(state, structure)
@@ -690,7 +700,13 @@ private fun WindwardScreen(
 							Text(if (structure == WindwardStructure.WIND_CHIMES) "Returns routed Glow to your home garden; no direct Moondew payback." else "Route some Glow to estimate the Moondew payback.", color = Muted, fontSize = 12.sp)
 						}
 
-						Button(onClick = { onBuild(structure) }, enabled = Garden.canBuildWindward(state, structure), modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp), colors = ButtonDefaults.buttonColors(containerColor = Mint, contentColor = Night)) {
+						RepeatBuyButton(
+							onBuy = { onBuild(structure) },
+							enabled = Garden.canBuildWindward(state, structure),
+							onPressed = { purchasing = it },
+							modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+							colors = ButtonDefaults.buttonColors(containerColor = Mint, contentColor = Night)
+						) {
 							Text("Build · ${Display.number(nextCost)} Moondew")
 						}
 					}

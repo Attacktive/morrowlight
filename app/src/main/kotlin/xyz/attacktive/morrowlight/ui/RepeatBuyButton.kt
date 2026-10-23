@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,7 +26,7 @@ import kotlinx.coroutines.launch
 
 /** Recognize Plant touches even when an active list fling consumes the pointer down. */
 @Composable
-fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier, onPressed: (Boolean) -> Unit = {}, content: @Composable RowScope.() -> Unit) {
+fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier, onPressed: (Boolean) -> Unit = {}, colors: ButtonColors = ButtonDefaults.buttonColors(containerColor = Mint.copy(alpha = 0.13f), contentColor = Mint), content: @Composable RowScope.() -> Unit) {
 	val interactionSource = remember { MutableInteractionSource() }
 	val currentBuy by rememberUpdatedState(onBuy)
 	val currentPressed by rememberUpdatedState(onPressed)
@@ -81,7 +82,7 @@ fun RepeatBuyButton(onBuy: () -> Unit, enabled: Boolean, modifier: Modifier = Mo
 			}
 		},
 		shape = RoundedCornerShape(14.dp),
-		colors = ButtonDefaults.buttonColors(containerColor = Mint.copy(alpha = 0.13f), contentColor = Mint),
+		colors = colors,
 		interactionSource = interactionSource,
 		content = content
 	)
