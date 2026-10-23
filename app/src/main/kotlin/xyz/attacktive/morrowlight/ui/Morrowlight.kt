@@ -405,6 +405,7 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 	var amountIndex by rememberSaveable { mutableIntStateOf(0) }
 	val amount = BuyAmount.entries[amountIndex]
 	val listState = rememberLazyListState()
+	var lastSelectedSection by remember { mutableIntStateOf(section) }
 	var purchasing by remember { mutableStateOf(false) }
 
 	LaunchedEffect(purchasing) {
@@ -414,7 +415,10 @@ private fun CultivateScreen(state: GameState, onBuy: (Cultivator, BuyAmount) -> 
 	}
 
 	LaunchedEffect(section) {
-		listState.scrollToItem(0)
+		if (lastSelectedSection != section) {
+			lastSelectedSection = section
+			listState.scrollToItem(0)
+		}
 	}
 
 	Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
