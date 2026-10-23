@@ -15,7 +15,7 @@ data class SavedGarden(val revision: Long, val state: GameState)
 object SaveCodec {
 	const val MAX_BYTES = 65_536
 	private const val MAGIC = 0x4D4F5252
-	private const val VERSION = 1
+	private const val VERSION = 2
 
 	fun encode(save: SavedGarden): ByteArray {
 		validate(save)
@@ -42,6 +42,7 @@ object SaveCodec {
 			out.writeLong(state.lastSeenMillis)
 			out.writeBoolean(state.preferences.reducedMotion)
 			out.writeBoolean(state.preferences.haptics)
+			out.writeUTF(state.constellation?.name.orEmpty())
 		}
 
 		val payload = bytes.toByteArray()
@@ -61,7 +62,7 @@ object SaveCodec {
 			require(input.readInt() == MAGIC) { "Not a Morrowlight save." }
 
 			val version = input.readInt()
-			if (version != VERSION) {
+			if (version != 1 && version != VERSION) {
 				throw UnsupportedSaveVersion(version)
 			}
 
@@ -94,13 +95,22 @@ object SaveCodec {
 				taps = input.readLong(),
 				charge = input.readInt(),
 				lastSeenMillis = input.readLong(),
-				preferences = Preferences(input.readBoolean(), input.readBoolean())
+				preferences = Preferences(input.readBoolean(), input.readBoolean()),
+				constellation = if (version >= 2) decodeConstellation(input.readUTF()) else null
 			)
 
 			require(input.available() == 0) { "Unexpected save content." }
 
 			SavedGarden(revision, state).also(::validate)
 		}
+	}
+
+	private fun decodeConstellation(name: String): Constellation? {
+		if (name.isEmpty()) {
+			return null
+		}
+
+		return Constellation.entries.firstOrNull { it.name == name } ?: throw IllegalArgumentException("Unknown constellation.")
 	}
 
 	fun validate(save: SavedGarden) {
@@ -113,6 +123,7 @@ object SaveCodec {
 		require(state.research.all { it in Almanac.researchById })
 		require(state.milestones.all { id -> Almanac.milestones.any { it.id == id } })
 		require(state.dawnSeeds in 0..MAX_SEEDS && state.dawns in 0 until Int.MAX_VALUE)
+		require(state.constellation == null || state.dawns > 0)
 		require(state.taps in 0 until Long.MAX_VALUE && state.charge in 0 until FIREFLY_CHARGE)
 		require(state.lastSeenMillis >= 0L)
 	}

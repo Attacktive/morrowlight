@@ -21,6 +21,7 @@ data class GameState(
 	val milestones: Set<String> = emptySet(),
 	val dawnSeeds: Long = 0L,
 	val dawns: Int = 0,
+	val constellation: Constellation? = null,
 	val taps: Long = 0L,
 	val charge: Int = 0,
 	val lastSeenMillis: Long = 0L,
@@ -36,6 +37,13 @@ enum class Cultivator(val title: String, val description: String, val baseCost: 
 	MOONWILLOW("Moonwillow", "Its silver leaves remember the moon.", 7_500.0, 80.0, 4_500.0),
 	CLOUD_LOOM("Cloud loom", "Weaves passing clouds into ribbons of light.", 65_000.0, 480.0, 40_000.0),
 	STARWELL("Starwell", "An invitation for the stars to come home.", 550_000.0, 3_000.0, 300_000.0)
+}
+
+enum class Constellation(val title: String, val description: String) {
+	UNDERSTORY("Understory", "Glowcaps and Lantern lilies produce 2x, but Cloud looms and Starwells produce 20% less."),
+	MOON_TIDE("Moon tide", "Firefly havens and Moonwillows produce 2x, but Glowcaps produce 30% less."),
+	SKY_WEAVE("Sky weave", "Cloud looms and Starwells produce 2x, but Lantern lilies produce 30% less."),
+	FIREFLY_CHORUS("Firefly chorus", "Firefly Wishes give 45 seconds of production instead of 15, but all cultivators produce 15% less.")
 }
 
 data class Research(val id: String, val title: String, val description: String, val cost: Double, val cultivator: Cultivator? = null, val requiredCount: Int = 0, val prerequisite: String? = null)
@@ -80,6 +88,8 @@ object Almanac {
 		Milestone("stars", "The stars came home", "Build a Starwell.") { it.count(Cultivator.STARWELL) > 0 },
 		Milestone("dawn", "Begin again, brighter", "Restore your first dawn.") { it.dawns >= 1 },
 		Milestone("ten-seeds", "Keeper of mornings", "Collect 10 permanent Dawn Seeds.") { it.dawnSeeds >= 10 },
+		Milestone("network", "We grow together", "Grow ten Glowcaps alongside a Lantern lily.") { it.count(Cultivator.GLOWCAP) >= 10 && it.count(Cultivator.LANTERN_LILY) > 0 },
+		Milestone("constellation", "Written in starlight", "Follow your first constellation.") { it.constellation != null },
 		Milestone("billion", "A sky of your own", "Gather one billion lifetime Glow.") { it.lifetimeGlow >= 1e9 }
 	)
 }
@@ -98,6 +108,36 @@ enum class BuyAmount(val limit: Int, val label: String) {
 object Garden {
 	fun seedMultiplier(state: GameState) = 1.0 + state.dawnSeeds * 0.15
 
+	/** Extra production earned by growing supporting cultivators, including when the supported colony is purchased first. */
+	fun synergyMultiplier(state: GameState, cultivator: Cultivator) = when (cultivator) {
+		Cultivator.LANTERN_LILY -> 1.0 + (state.count(Cultivator.GLOWCAP) / 10).coerceAtMost(5) * 0.2
+		Cultivator.FIREFLY_HAVEN -> 1.0 + (state.count(Cultivator.MOONWILLOW) / 5).coerceAtMost(5) * 0.15
+		Cultivator.STARWELL -> 1.0 + (state.count(Cultivator.CLOUD_LOOM) / 5).coerceAtMost(10) * 0.1
+		else -> 1.0
+	}
+
+	fun constellationMultiplier(state: GameState, cultivator: Cultivator) = when (state.constellation) {
+		null -> 1.0
+		Constellation.UNDERSTORY -> when (cultivator) {
+			Cultivator.GLOWCAP, Cultivator.LANTERN_LILY -> 2.0
+			Cultivator.CLOUD_LOOM, Cultivator.STARWELL -> 0.8
+			else -> 1.0
+		}
+		Constellation.MOON_TIDE -> when (cultivator) {
+			Cultivator.FIREFLY_HAVEN, Cultivator.MOONWILLOW -> 2.0
+			Cultivator.GLOWCAP -> 0.7
+			else -> 1.0
+		}
+		Constellation.SKY_WEAVE -> when (cultivator) {
+			Cultivator.CLOUD_LOOM, Cultivator.STARWELL -> 2.0
+			Cultivator.LANTERN_LILY -> 0.7
+			else -> 1.0
+		}
+		Constellation.FIREFLY_CHORUS -> 0.85
+	}
+
+	fun fireflySeconds(state: GameState) = if (state.constellation == Constellation.FIREFLY_CHORUS) 45 else 15
+
 	fun colonyMultiplier(count: Int) = 2.0.pow(listOf(10, 25, 50, 100).count { count >= it })
 
 	fun nextColonyMilestone(count: Int) = listOf(10, 25, 50, 100).firstOrNull { it > count }
@@ -112,10 +152,23 @@ object Garden {
 		val dew = if ("morning-dew" in state.research) 1.3 else 1.0
 		val charts = if ("star-charts" in state.research) 1.5 else 1.0
 
-		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts)
+		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts * synergyMultiplier(state, cultivator) * constellationMultiplier(state, cultivator))
 	}
 
 	fun production(state: GameState) = bounded(Cultivator.entries.sumOf { production(state, it) })
+
+	/** Includes the indirect production gained by reaching a supporting colony's synergy threshold. */
+	fun productionGain(state: GameState, cultivator: Cultivator, quantity: Int): Double {
+		val count = state.count(cultivator)
+		if (quantity <= 0 || count >= MAX_OWNED) {
+			return 0.0
+		}
+
+		val counts = state.owned.toMutableList()
+		counts[cultivator.ordinal] += quantity.coerceAtMost(MAX_OWNED - count)
+
+		return (production(state.copy(owned = counts)) - production(state)).coerceAtLeast(0.0)
+	}
 
 	fun tapValue(state: GameState): Double {
 		val hands = if ("gentle-hands" in state.research) 2.0 else 1.0
@@ -126,7 +179,7 @@ object Garden {
 
 	fun tap(state: GameState): GameState {
 		val charged = state.charge + 1 >= FIREFLY_CHARGE
-		val gift = if (charged) production(state) * 15.0 else 0.0
+		val gift = if (charged) production(state) * fireflySeconds(state) else 0.0
 
 		return rememberMilestones(
 			earn(state, tapValue(state) + gift)
@@ -225,6 +278,15 @@ object Garden {
 	}
 
 	fun nextSeedAt(state: GameState) = PRESTIGE_THRESHOLD * (prestigeReward(state) + 1.0).pow(2)
+
+	/** A single reversible-at-dawn strategy choice, available only after the first restored dawn. */
+	fun attune(state: GameState, constellation: Constellation): GameState {
+		if (state.dawns == 0 || state.constellation != null) {
+			return state
+		}
+
+		return rememberMilestones(state.copy(constellation = constellation))
+	}
 
 	fun prestige(state: GameState): GameState {
 		val reward = prestigeReward(state)

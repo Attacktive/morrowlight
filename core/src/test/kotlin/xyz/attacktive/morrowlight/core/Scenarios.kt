@@ -69,6 +69,26 @@ object Scenarios {
 			check(state.count(Cultivator.GLOWCAP) == MAX_OWNED)
 			check(Garden.quote(state, Cultivator.GLOWCAP, 1).quantity == 0)
 		},
+		"Supporting cultivators boost other colonies at their thresholds" to {
+			val before = GameState(owned = listOf(9, 10, 0, 0, 0, 0))
+			val after = before.copy(owned = listOf(10, 10, 0, 0, 0, 0))
+			close(1.0, Garden.synergyMultiplier(before, Cultivator.LANTERN_LILY))
+			close(1.2, Garden.synergyMultiplier(after, Cultivator.LANTERN_LILY))
+			close(Garden.production(before, Cultivator.LANTERN_LILY) * 1.2, Garden.production(after, Cultivator.LANTERN_LILY))
+		},
+		"Synergies have a bounded ceiling" to {
+			val abundant = GameState(owned = listOf(1_000, 1, 1, 1_000, 1_000, 1))
+			close(2.0, Garden.synergyMultiplier(abundant, Cultivator.LANTERN_LILY))
+			close(1.75, Garden.synergyMultiplier(abundant, Cultivator.FIREFLY_HAVEN))
+			close(2.0, Garden.synergyMultiplier(abundant, Cultivator.STARWELL))
+		},
+		"Investment previews include indirect synergy gains" to {
+			val before = GameState(owned = listOf(9, 10, 0, 0, 0, 0))
+			val after = before.copy(owned = listOf(10, 10, 0, 0, 0, 0))
+			close(Garden.production(after) - Garden.production(before), Garden.productionGain(before, Cultivator.GLOWCAP, 1))
+			check(Garden.productionGain(before, Cultivator.GLOWCAP, 1) > Garden.production(after, Cultivator.GLOWCAP) - Garden.production(before, Cultivator.GLOWCAP))
+			close(0.0, Garden.productionGain(before, Cultivator.GLOWCAP, 0))
+		},
 		"Colony milestones double production" to {
 			close(1.0, Garden.colonyMultiplier(9))
 			close(2.0, Garden.colonyMultiplier(10))
@@ -173,6 +193,37 @@ object Scenarios {
 			check("dawn" in fresh.milestones)
 			close(1.3, Garden.seedMultiplier(fresh))
 		},
+		"Constellations unlock after the first dawn and lock until the next" to {
+			check(Garden.attune(GameState(), Constellation.UNDERSTORY) == GameState())
+			val afterDawn = Garden.prestige(funded(1_000_000.0))
+			val attuned = Garden.attune(afterDawn, Constellation.UNDERSTORY)
+			check(attuned.constellation == Constellation.UNDERSTORY)
+			check(Garden.attune(attuned, Constellation.SKY_WEAVE) == attuned)
+			check("constellation" in attuned.milestones)
+			val nextDawn = Garden.prestige(Garden.earn(attuned, 1_000_000.0))
+			check(nextDawn.constellation == null && "constellation" in nextDawn.milestones)
+		},
+		"Constellation production trade-offs affect only the named colonies" to {
+			val before = GameState(owned = listOf(10, 10, 10, 10, 10, 10), dawns = 1)
+			val under = Garden.attune(before, Constellation.UNDERSTORY)
+			close(Garden.production(before, Cultivator.GLOWCAP) * 2.0, Garden.production(under, Cultivator.GLOWCAP))
+			close(Garden.production(before, Cultivator.STARWELL) * 0.8, Garden.production(under, Cultivator.STARWELL))
+			close(Garden.production(before, Cultivator.MOONWILLOW), Garden.production(under, Cultivator.MOONWILLOW))
+			val moon = Garden.attune(before, Constellation.MOON_TIDE)
+			close(Garden.production(before, Cultivator.FIREFLY_HAVEN) * 2.0, Garden.production(moon, Cultivator.FIREFLY_HAVEN))
+			close(Garden.production(before, Cultivator.GLOWCAP) * 0.7, Garden.production(moon, Cultivator.GLOWCAP))
+			val sky = Garden.attune(before, Constellation.SKY_WEAVE)
+			close(Garden.production(before, Cultivator.CLOUD_LOOM) * 2.0, Garden.production(sky, Cultivator.CLOUD_LOOM))
+			close(Garden.production(before, Cultivator.LANTERN_LILY) * 0.7, Garden.production(sky, Cultivator.LANTERN_LILY))
+		},
+		"Firefly chorus trades passive production for stronger wishes" to {
+			val before = GameState(owned = producer(10).owned, dawns = 1, charge = 24)
+			val chorus = Garden.attune(before, Constellation.FIREFLY_CHORUS)
+			close(Garden.production(before) * 0.85, Garden.production(chorus))
+			check(Garden.fireflySeconds(chorus) == 45)
+			close(Garden.tapValue(chorus) + Garden.production(chorus) * 45.0, Garden.tap(chorus).glow)
+			check(Garden.fireflySeconds(before) == 15)
+		},
 		"Prestige cannot be claimed twice without growing" to {
 			val fresh = Garden.prestige(funded(1_000_000.0))
 			check(Garden.prestige(fresh) == fresh)
@@ -188,7 +239,7 @@ object Scenarios {
 			check(Garden.prestigeReward(state.copy(dawnSeeds = MAX_SEEDS)) == 0L)
 		},
 		"Save codec round trips every field" to {
-			val state = funded(1e12).copy(owned = listOf(10, 4, 2, 1, 0, 0), research = setOf("gentle-hands", "morning-dew"), dawnSeeds = 123, dawns = 4, taps = 88, charge = 3, lastSeenMillis = 42, preferences = Preferences(reducedMotion = true, haptics = false))
+			val state = funded(1e12).copy(owned = listOf(10, 4, 2, 1, 0, 0), research = setOf("gentle-hands", "morning-dew"), dawnSeeds = 123, dawns = 4, constellation = Constellation.SKY_WEAVE, taps = 88, charge = 3, lastSeenMillis = 42, preferences = Preferences(reducedMotion = true, haptics = false))
 			val save = SavedGarden(91, state)
 			check(SaveCodec.decode(SaveCodec.encode(save)) == save)
 		},
@@ -206,10 +257,21 @@ object Scenarios {
 				rejected { SaveCodec.encode(SavedGarden(1, GameState(glow = number))) }
 			}
 		},
+		"Version 1 saves migrate without resetting the garden" to {
+			val saved = SavedGarden(9, funded(12_345.0).copy(dawns = 2, dawnSeeds = 3))
+			val encoded = SaveCodec.encode(saved)
+			val payload = encoded.copyOfRange(0, encoded.size - 34)
+			payload[7] = 1
+			val legacy = payload + MessageDigest.getInstance("SHA-256").digest(payload)
+			check(SaveCodec.decode(legacy) == saved)
+		},
+		"Unrestored gardens cannot save constellation selections" to {
+			rejected { SaveCodec.encode(SavedGarden(1, GameState(constellation = Constellation.UNDERSTORY))) }
+		},
 		"Unknown save schemas are rejected, not reset" to {
 			val bytes = SaveCodec.encode(SavedGarden(1, GameState()))
 			val payload = bytes.copyOfRange(0, bytes.size - 32)
-			payload[7] = 2
+			payload[7] = 3
 			try {
 				SaveCodec.decode(payload + MessageDigest.getInstance("SHA-256").digest(payload))
 				error("Expected version rejection")
@@ -297,12 +359,13 @@ object Scenarios {
 			var state = GameState()
 
 			repeat(10_000) {
-				state = when (random.nextInt(6)) {
+				state = when (random.nextInt(7)) {
 					0 -> Garden.tap(state)
 					1 -> Garden.tick(state, random.nextDouble(0.0, 1_000.0))
 					2 -> Garden.buy(state, Cultivator.entries[random.nextInt(6)], listOf(1, 10, 1_000)[random.nextInt(3)])
 					3 -> Garden.research(state, Almanac.research[random.nextInt(Almanac.research.size)].id)
 					4 -> Garden.prestige(state)
+					5 -> Garden.attune(state, Constellation.entries[random.nextInt(Constellation.entries.size)])
 					else -> SaveCodec.decode(SaveCodec.encode(SavedGarden(1, state))).state
 				}
 
