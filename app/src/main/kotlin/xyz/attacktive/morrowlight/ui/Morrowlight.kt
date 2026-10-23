@@ -708,12 +708,38 @@ private fun CardBox(content: @Composable ColumnScope.() -> Unit) {
 @Preview(name = "First light", widthDp = 390, heightDp = 844, showBackground = true)
 @Composable
 private fun FirstLightPreview() {
-	MorrowTheme { GardenApp(GardenUiState(loading = false), {}, { _, _ -> }, {}, {}, {}, {}, {}, {}) }
+	MorrowTheme {
+		GardenApp(
+			ui = GardenUiState(loading = false),
+			onTap = {},
+			onBuy = { _, _ -> },
+			onResearch = {},
+			onPrestige = {},
+			onAttune = {},
+			onPreferences = {},
+			onDismissOffline = {},
+			onDismissRecovery = {},
+			onRetry = {}
+		)
+	}
 }
 
 @Preview(name = "A living garden", widthDp = 390, heightDp = 844, showBackground = true)
 @Composable
 private fun LivingGardenPreview() {
 	val state = GameState(glow = 8_421.0, runGlow = 760_000.0, lifetimeGlow = 760_000.0, owned = listOf(35, 18, 12, 6, 3, 1))
-	MorrowTheme { GardenApp(GardenUiState(garden = state, loading = false), {}, { _, _ -> }, {}, {}, {}, {}, {}, {}) }
+	MorrowTheme {
+		GardenApp(
+			ui = GardenUiState(garden = state, loading = false),
+			onTap = {},
+			onBuy = { _, _ -> },
+			onResearch = {},
+			onPrestige = {},
+			onAttune = {},
+			onPreferences = {},
+			onDismissOffline = {},
+			onDismissRecovery = {},
+			onRetry = {}
+		)
+	}
 }
