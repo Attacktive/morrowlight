@@ -461,6 +461,17 @@ object Scenarios {
 				.filter { it.color == 0xFF609B88 })
 			)
 		},
+		"Skyworks structures appear permanently as each project completes" to {
+			val empty = GardenArt.scene(GameState())
+			val starting = funded(300_000_000.0).copy(dawns = 1)
+			val bridge = Garden.contributeSkywork(starting, Skywork.LANTERN_BRIDGE, Contribution.ALL)
+			val windmills = Garden.contributeSkywork(bridge, Skywork.WINDMILLS, Contribution.ALL)
+			val terrace = Garden.contributeSkywork(windmills, Skywork.MOON_TERRACE, Contribution.ALL)
+			check(GardenArt.scene(bridge).size > empty.size)
+			check(GardenArt.scene(windmills).size > GardenArt.scene(bridge).size)
+			check(GardenArt.scene(terrace).size > GardenArt.scene(windmills).size)
+			check(GardenArt.scene(Garden.prestige(terrace)).containsAll(GardenArt.scene(terrace)))
+		},
 		"Garden illustration is deterministic across recompositions" to {
 			val state = GameState(owned = listOf(18, 12, 6, 3, 2, 1))
 			check(GardenArt.scene(state) == GardenArt.scene(state))

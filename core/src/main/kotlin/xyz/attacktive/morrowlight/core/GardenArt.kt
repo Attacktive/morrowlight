@@ -5,7 +5,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
-/** Shared vector scene in a 480 x 380 view box. Every plant corresponds to an owned cultivator. */
+/** Shared vector scene in a 480 x 380 view box. Plants follow ownership; structures follow permanent restoration. */
 sealed interface GardenMark {
 	val color: Long
 	val alpha: Float
@@ -66,6 +66,33 @@ object GardenArt {
 			val y = 232 + random.nextInt(30)
 
 			path("M$x $y l-3 -7 m3 7 l4 -5", 0xFFA4CFAD, 0.36f, 1.2f)
+		}
+
+		if (Garden.skyworkComplete(state, Skywork.LANTERN_BRIDGE)) {
+			// The far side of the garden lights up as the bridge is restored.
+			path("M382 245 Q428 224 480 236", 0xFF4A6570, 1f, 6f)
+			path("M384 240 Q429 219 481 231", GOLD, 0.9f, 2f)
+			path("M395 241 L395 229 M421 231 L421 219 M449 229 L449 218 M475 233 L475 220", 0xFF9DBBA5, 0.92f, 1.9f)
+			for ((x, y) in listOf(395f to 227f, 421f to 217f, 449f to 216f, 475f to 218f)) {
+				halo(x, y, 17f, GOLD)
+				circle(x, y, 3.5f, GOLD)
+			}
+		}
+
+		if (Garden.skyworkComplete(state, Skywork.WINDMILLS)) {
+			// A slender windmill rises above the lit bridge.
+			path("M442 231 L444 188 L452 188 L454 232Z", 0xFF729B91)
+			path("M440 189 L446 183 L454 189Z", 0xFFBFDBCA)
+			circle(448f, 188f, 4f, GOLD)
+			path("M448 188 L435 172 M448 188 L462 175 M448 188 L461 201 M448 188 L433 201", 0xFFDBD3AF, 0.92f, 2.4f)
+		}
+
+		if (Garden.skyworkComplete(state, Skywork.MOON_TERRACE)) {
+			// The farthest landing glows, ready for the next island update.
+			path("M455 236 L455 222 L472 222 L472 238Z", 0xFF6C8E8B)
+			path("M454 220 L474 220 M459 217 L459 209 M469 217 L469 209", 0xFFEAD9B5, 0.95f, 2f)
+			halo(464f, 207f, 24f, LILAC)
+			circle(464f, 207f, 4f, LILAC)
 		}
 
 		if (state.count(Cultivator.MOONWILLOW) > 0) {

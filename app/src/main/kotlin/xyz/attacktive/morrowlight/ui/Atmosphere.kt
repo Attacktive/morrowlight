@@ -37,8 +37,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import xyz.attacktive.morrowlight.core.Cultivator
 import xyz.attacktive.morrowlight.core.GameState
+import xyz.attacktive.morrowlight.core.Garden
 import xyz.attacktive.morrowlight.core.GardenArt
 import xyz.attacktive.morrowlight.core.GardenMark
+import xyz.attacktive.morrowlight.core.Skywork
 
 val Night = Color(0xFF111A25)
 val Panel = Color(0xFF1C2933)
@@ -72,7 +74,7 @@ fun MorrowTheme(content: @Composable () -> Unit) {
 
 @Composable
 fun GardenScene(state: GameState, animated: Boolean, modifier: Modifier = Modifier) {
-	val marks = remember(state.owned) { GardenArt.scene(state) }
+	val marks = remember(state.owned, state.skyworks) { GardenArt.scene(state) }
 	val paths = remember(marks) { marks.filterIsInstance<GardenMark.Shape>().associateWith { PathParser().parsePathString(it.data).toPath() } }
 	val still = remember { mutableFloatStateOf(0f) }
 	val phase: State<Float> = if (animated && !state.preferences.reducedMotion) {
@@ -82,7 +84,7 @@ fun GardenScene(state: GameState, animated: Boolean, modifier: Modifier = Modifi
 		still
 	}
 
-	Canvas(modifier.semantics { contentDescription = "A floating garden with ${state.owned.sum()} cultivators and a glowing ember." }) {
+	Canvas(modifier.semantics { contentDescription = "A floating garden with ${state.owned.sum()} cultivators, ${Skywork.entries.count { Garden.skyworkComplete(state, it) }} restored structures, and a glowing ember." }) {
 		drawRect(Brush.verticalGradient(listOf(Color(0xFF192135), Color(0xFF242C43), Color(0xFF263D44))))
 
 		withTransform({ scale(size.width / 480f, size.height / 380f, Offset.Zero) }) {
@@ -107,7 +109,7 @@ fun GardenScene(state: GameState, animated: Boolean, modifier: Modifier = Modifi
 	}
 }
 
-enum class Symbol { SEED, SPARK, SUN, SETTINGS, GROW, BOOK }
+enum class Symbol { SEED, SPARK, SUN, SETTINGS, GROW, BOOK, BRIDGE }
 
 @Composable
 fun Glyph(modifier: Modifier = Modifier, symbol: Symbol, color: Color = Mint) {
@@ -173,6 +175,19 @@ fun Glyph(modifier: Modifier = Modifier, symbol: Symbol, color: Color = Mint) {
 					for (index in 0..7) {
 						val angle = index * PI / 4
 						drawLine(color, Offset(12f + cos(angle).toFloat() * 6f, 12f + sin(angle).toFloat() * 6f), Offset(12f + cos(angle).toFloat() * 9f, 12f + sin(angle).toFloat() * 9f), 2.5f, StrokeCap.Round)
+					}
+				}
+
+				Symbol.BRIDGE -> {
+					val arch = Path().apply {
+						moveTo(3f, 15f)
+						cubicTo(7f, 8f, 17f, 8f, 21f, 15f)
+					}
+
+					drawPath(arch, color, style = stroke)
+					drawLine(color, Offset(3f, 15f), Offset(21f, 15f), 1.7f, StrokeCap.Round)
+					for (x in listOf(6f, 12f, 18f)) {
+						drawLine(color, Offset(x, 6f), Offset(x, 19f), 1.4f, StrokeCap.Round)
 					}
 				}
 
