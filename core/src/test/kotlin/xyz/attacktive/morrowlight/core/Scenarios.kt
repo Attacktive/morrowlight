@@ -231,6 +231,67 @@ object Scenarios {
 			close(Garden.tapValue(chorus) + Garden.production(chorus) * 45.0, Garden.tap(chorus).glow)
 			check(Garden.fireflySeconds(before) == 15)
 		},
+		"Skyworks cannot accept contributions before the first dawn" to {
+			val state = funded(100_000_000.0)
+			check(!Garden.skyworkAvailable(state, Skywork.LANTERN_BRIDGE))
+			close(0.0, Garden.skyworkQuote(state, Skywork.LANTERN_BRIDGE, Contribution.ALL))
+			check(Garden.contributeSkywork(state, Skywork.LANTERN_BRIDGE, Contribution.ALL) == state)
+		},
+		"Skyworks percentages spend the quoted Glow without minting new earnings" to {
+			val state = funded(8_000_000.0).copy(dawns = 1)
+			close(800_000.0, Garden.skyworkQuote(state, Skywork.LANTERN_BRIDGE, Contribution.TENTH))
+			val first = Garden.contributeSkywork(state, Skywork.LANTERN_BRIDGE, Contribution.TENTH)
+			close(800_000.0, Garden.skyworkProgress(first, Skywork.LANTERN_BRIDGE))
+			close(7_200_000.0, first.glow)
+			val second = Garden.contributeSkywork(first, Skywork.LANTERN_BRIDGE, Contribution.HALF)
+			close(4_400_000.0, Garden.skyworkProgress(second, Skywork.LANTERN_BRIDGE))
+			val finished = Garden.contributeSkywork(second, Skywork.LANTERN_BRIDGE, Contribution.ALL)
+			close(5_000_000.0, Garden.skyworkProgress(finished, Skywork.LANTERN_BRIDGE))
+			close(3_000_000.0, finished.glow)
+			check(finished.runGlow == state.runGlow && finished.lifetimeGlow == state.lifetimeGlow)
+			check(Garden.skyworkComplete(finished, Skywork.LANTERN_BRIDGE))
+			check(Garden.contributeSkywork(finished, Skywork.LANTERN_BRIDGE, Contribution.ALL) == finished)
+		},
+		"Skyworks projects must be restored in order" to {
+			val state = funded(300_000_000.0).copy(dawns = 1)
+			check(!Garden.skyworkAvailable(state, Skywork.WINDMILLS))
+			check(!Garden.skyworkAvailable(state, Skywork.MOON_TERRACE))
+			check(Garden.contributeSkywork(state, Skywork.WINDMILLS, Contribution.ALL) == state)
+			val bridge = Garden.contributeSkywork(state, Skywork.LANTERN_BRIDGE, Contribution.ALL)
+			check(Garden.skyworkAvailable(bridge, Skywork.WINDMILLS))
+			check(!Garden.skyworkAvailable(bridge, Skywork.MOON_TERRACE))
+			val windmills = Garden.contributeSkywork(bridge, Skywork.WINDMILLS, Contribution.ALL)
+			check(Garden.skyworkAvailable(windmills, Skywork.MOON_TERRACE))
+			val terrace = Garden.contributeSkywork(windmills, Skywork.MOON_TERRACE, Contribution.ALL)
+			check(Skywork.entries.all { Garden.skyworkComplete(terrace, it) })
+			check(!Garden.skyworkAvailable(terrace, Skywork.MOON_TERRACE))
+			check(listOf("skyworks-bridge", "skyworks-windmills", "skyworks-terrace").all { it in terrace.milestones })
+		},
+		"Windmills and terrace grant permanent, independent bonuses" to {
+			val state = funded(300_000_000.0).copy(dawns = 1, owned = producer(10).owned)
+			val bridge = Garden.contributeSkywork(state, Skywork.LANTERN_BRIDGE, Contribution.ALL)
+			close(Garden.production(state), Garden.production(bridge))
+			close(Garden.tapValue(state), Garden.tapValue(bridge))
+			val windmills = Garden.contributeSkywork(bridge, Skywork.WINDMILLS, Contribution.ALL)
+			close(Garden.production(bridge) * 1.15, Garden.production(windmills))
+			val terrace = Garden.contributeSkywork(windmills, Skywork.MOON_TERRACE, Contribution.ALL)
+			close(Garden.production(windmills), Garden.production(terrace))
+			close((Garden.tapValue(windmills) - Garden.production(windmills) * 0.04) * 1.2 + Garden.production(terrace) * 0.04, Garden.tapValue(terrace))
+			val restored = Garden.prestige(terrace)
+			check(restored.skyworks == terrace.skyworks)
+			check(restored.glow == 0.0 && restored.owned.sum() == 0)
+			close(1.15, Garden.skyworkProductionMultiplier(restored))
+			close(1.2, Garden.skyworkTouchMultiplier(restored))
+			check("skyworks-terrace" in restored.milestones)
+		},
+		"Skyworks contributions cannot overdraft unspent Glow" to {
+			val state = funded(750.0).copy(dawns = 1)
+			val project = Garden.contributeSkywork(state, Skywork.LANTERN_BRIDGE, Contribution.ALL)
+			close(750.0, Garden.skyworkProgress(project, Skywork.LANTERN_BRIDGE))
+			close(0.0, project.glow)
+			check(!Garden.skyworkComplete(project, Skywork.LANTERN_BRIDGE))
+			check(Garden.contributeSkywork(project, Skywork.LANTERN_BRIDGE, Contribution.HALF) == project)
+		},
 		"Prestige cannot be claimed twice without growing" to {
 			val fresh = Garden.prestige(funded(1_000_000.0))
 			check(Garden.prestige(fresh) == fresh)
@@ -244,6 +305,33 @@ object Scenarios {
 			close(MAX_GLOW, state.glow)
 			check(Garden.prestigeReward(state) == MAX_SEEDS)
 			check(Garden.prestigeReward(state.copy(dawnSeeds = MAX_SEEDS)) == 0L)
+		},
+		"Save codec round trips completed and partial Skyworks" to {
+			val garden = funded(300_000_000.0).copy(dawns = 2)
+			val bridge = Garden.contributeSkywork(garden, Skywork.LANTERN_BRIDGE, Contribution.ALL)
+			val partial = Garden.contributeSkywork(bridge, Skywork.WINDMILLS, Contribution.TENTH)
+			val original = SavedGarden(43, partial)
+			check(SaveCodec.decode(SaveCodec.encode(original)) == original)
+			val complete = Garden.contributeSkywork(partial, Skywork.WINDMILLS, Contribution.ALL)
+			check(SaveCodec.decode(SaveCodec.encode(SavedGarden(44, complete))).state == complete)
+		},
+		"Save validation rejects impossible Skyworks progress" to {
+			val bridge = Skywork.LANTERN_BRIDGE.cost
+			val windmills = Skywork.WINDMILLS.cost
+			val states = listOf(
+				GameState(dawns = 1, skyworks = listOf(1.0)),
+				GameState(dawns = 1, skyworks = listOf(-1.0, 0.0, 0.0)),
+				GameState(dawns = 1, skyworks = listOf(Double.NaN, 0.0, 0.0)),
+				GameState(dawns = 1, skyworks = listOf(Double.POSITIVE_INFINITY, 0.0, 0.0)),
+				GameState(dawns = 1, skyworks = listOf(bridge + 1.0, 0.0, 0.0)),
+				GameState(dawns = 0, skyworks = listOf(1.0, 0.0, 0.0)),
+				GameState(dawns = 1, skyworks = listOf(bridge - 1.0, 1.0, 0.0)),
+				GameState(dawns = 1, skyworks = listOf(bridge, windmills - 1.0, 1.0))
+			)
+
+			for (state in states) {
+				rejected { SaveCodec.encode(SavedGarden(1, state)) }
+			}
 		},
 		"Save codec round trips every field" to {
 			val state = funded(1e12).copy(owned = listOf(10, 4, 2, 1, 0, 0), research = setOf("gentle-hands", "morning-dew"), dawnSeeds = 123, dawns = 4, constellation = Constellation.SKY_WEAVE, taps = 88, charge = 3, lastSeenMillis = 42, preferences = Preferences(reducedMotion = true, haptics = false))
@@ -264,13 +352,23 @@ object Scenarios {
 				rejected { SaveCodec.encode(SavedGarden(1, GameState(glow = number))) }
 			}
 		},
-		"Version 1 saves migrate without resetting the garden" to {
+		"Version 1 and 2 saves migrate without losing the garden" to {
 			val saved = SavedGarden(9, funded(12_345.0).copy(dawns = 2, dawnSeeds = 3))
 			val encoded = SaveCodec.encode(saved)
-			val payload = encoded.copyOfRange(0, encoded.size - 34)
-			payload[7] = 1
-			val legacy = payload + MessageDigest.getInstance("SHA-256").digest(payload)
-			check(SaveCodec.decode(legacy) == saved)
+			val payload = encoded.copyOfRange(0, encoded.size - 32)
+			val previous = payload.copyOfRange(0, payload.size - Skywork.entries.size * 8)
+			previous[7] = 2
+			val v2 = previous + MessageDigest.getInstance("SHA-256").digest(previous)
+			check(SaveCodec.decode(v2) == saved)
+			val first = previous.copyOfRange(0, previous.size - 2)
+			first[7] = 1
+			val v1 = first + MessageDigest.getInstance("SHA-256").digest(first)
+			check(SaveCodec.decode(v1) == saved)
+			val attuned = saved.copy(state = saved.state.copy(constellation = Constellation.UNDERSTORY))
+			val current = SaveCodec.encode(attuned)
+			val attunedPayload = current.copyOfRange(0, current.size - 32 - Skywork.entries.size * 8)
+			attunedPayload[7] = 2
+			check(SaveCodec.decode(attunedPayload + MessageDigest.getInstance("SHA-256").digest(attunedPayload)) == attuned)
 		},
 		"Unrestored gardens cannot save constellation selections" to {
 			rejected { SaveCodec.encode(SavedGarden(1, GameState(constellation = Constellation.UNDERSTORY))) }
@@ -278,7 +376,7 @@ object Scenarios {
 		"Unknown save schemas are rejected, not reset" to {
 			val bytes = SaveCodec.encode(SavedGarden(1, GameState()))
 			val payload = bytes.copyOfRange(0, bytes.size - 32)
-			payload[7] = 3
+			payload[7] = 4
 			try {
 				SaveCodec.decode(payload + MessageDigest.getInstance("SHA-256").digest(payload))
 				error("Expected version rejection")
@@ -372,13 +470,14 @@ object Scenarios {
 			var state = GameState()
 
 			repeat(10_000) {
-				state = when (random.nextInt(7)) {
+				state = when (random.nextInt(8)) {
 					0 -> Garden.tap(state)
 					1 -> Garden.tick(state, random.nextDouble(0.0, 1_000.0))
 					2 -> Garden.buy(state, Cultivator.entries[random.nextInt(6)], listOf(1, 10, 1_000)[random.nextInt(3)])
 					3 -> Garden.research(state, Almanac.research[random.nextInt(Almanac.research.size)].id)
 					4 -> Garden.prestige(state)
 					5 -> Garden.attune(state, Constellation.entries[random.nextInt(Constellation.entries.size)])
+					6 -> Garden.contributeSkywork(state, Skywork.entries[random.nextInt(Skywork.entries.size)], Contribution.entries[random.nextInt(Contribution.entries.size)])
 					else -> SaveCodec.decode(SaveCodec.encode(SavedGarden(1, state))).state
 				}
 
