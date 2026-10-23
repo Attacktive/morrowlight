@@ -23,6 +23,9 @@ data class GameState(
 	val dawns: Int = 0,
 	val constellation: Constellation? = null,
 	val skyworks: List<Double> = List(Skywork.entries.size) { 0.0 },
+	val moondew: Double = 0.0,
+	val routing: MoondewRouting = MoondewRouting.NONE,
+	val windwardLevels: List<Int> = List(WindwardStructure.entries.size) { 0 },
 	val taps: Long = 0L,
 	val charge: Int = 0,
 	val lastSeenMillis: Long = 0L,
@@ -51,7 +54,7 @@ enum class Constellation(val title: String, val description: String) {
 enum class Skywork(val title: String, val description: String, val cost: Double, val reward: String) {
 	LANTERN_BRIDGE("Light the bridge", "Carry light beyond the garden's edge.", 5_000_000.0, "A permanent lantern bridge appears in the garden."),
 	WINDMILLS("Restore the windmills", "Wake the wind that turns the distant mills.", 30_000_000.0, "All cultivators permanently produce 15% more Glow."),
-	MOON_TERRACE("Awaken the terrace", "Prepare a quiet landing for the neighboring island.", 180_000_000.0, "Base touch Glow permanently increases by 20%. The neighboring island will arrive in a future update.")
+	MOON_TERRACE("Awaken the terrace", "Prepare a quiet landing for the neighboring island.", 180_000_000.0, "Base touch Glow permanently increases by 20%, and Windward Isle opens for exploration.")
 }
 
 enum class Contribution(val fraction: Double, val title: String) {
@@ -59,6 +62,23 @@ enum class Contribution(val fraction: Double, val title: String) {
 	HALF(0.5, "50%"),
 	ALL(1.0, "All")
 }
+
+/** Fraction of passive Glow production sent to Windward. Order and names are stable save values. */
+enum class MoondewRouting(val fraction: Double, val title: String) {
+	NONE(0.0, "0%"),
+	QUARTER(0.25, "25%"),
+	HALF(0.5, "50%"),
+	THREE_QUARTERS(0.75, "75%")
+}
+
+/** Each upgrade is permanent across dawns and paid only with Moondew. */
+enum class WindwardStructure(val title: String, val description: String, val baseCost: Double, val costGrowth: Double, val maxLevel: Int) {
+	MIST_CONDENSER("Mist condenser", "Condense more Moondew from every Glow you route.", 20_000.0, 2.1, 12),
+	WIND_CHIMES("Wind chimes", "Return some diverted Glow to your home garden.", 60_000.0, 2.15, 10),
+	STAR_BEACON("Star beacon", "Guide both islands with a permanent cultivator production bonus.", 180_000.0, 2.25, 10)
+}
+
+data class IslandRateGain(val glowPerSecond: Double, val moondewPerSecond: Double)
 
 data class Research(val id: String, val title: String, val description: String, val cost: Double, val cultivator: Cultivator? = null, val requiredCount: Int = 0, val prerequisite: String? = null)
 
@@ -107,6 +127,8 @@ object Almanac {
 		Milestone("skyworks-bridge", "A path through the night", "Complete the lantern bridge.") { Garden.skyworkComplete(it, Skywork.LANTERN_BRIDGE) },
 		Milestone("skyworks-windmills", "The wind remembers", "Restore the windmills.") { Garden.skyworkComplete(it, Skywork.WINDMILLS) },
 		Milestone("skyworks-terrace", "The next horizon", "Awaken the moon terrace.") { Garden.skyworkComplete(it, Skywork.MOON_TERRACE) },
+		Milestone("windward-first-build", "A second garden takes root", "Restore your first Windward structure.") { it.windwardLevels.any { level -> level > 0 } },
+		Milestone("windward-threefold", "Both islands, one sky", "Build all three Windward structures.") { it.windwardLevels.all { level -> level > 0 } },
 		Milestone("billion", "A sky of your own", "Gather one billion lifetime Glow.") { it.lifetimeGlow >= 1e9 }
 	)
 }
@@ -115,7 +137,7 @@ data class Milestone(val id: String, val title: String, val description: String,
 
 data class Quote(val quantity: Int, val cost: Double)
 
-data class OfflineGrowth(val state: GameState, val earned: Double, val seconds: Long, val capped: Boolean)
+data class OfflineGrowth(val state: GameState, val earned: Double, val seconds: Long, val capped: Boolean, val moondewEarned: Double = 0.0)
 
 enum class BuyAmount(val limit: Int, val label: String) {
 	ONE(1, "1"), TEN(10, "10"), MAX(MAX_OWNED, "Max")
@@ -162,6 +184,76 @@ object Garden {
 
 	fun skyworkTouchMultiplier(state: GameState) = if (skyworkComplete(state, Skywork.MOON_TERRACE)) 1.2 else 1.0
 
+	fun windwardUnlocked(state: GameState) = skyworkComplete(state, Skywork.MOON_TERRACE)
+
+	fun windwardLevel(state: GameState, structure: WindwardStructure) = state.windwardLevels[structure.ordinal]
+
+	/** An exchange rate, not an independent generator. Routing 250 Glow yields 1 Moondew before upgrades. */
+	fun moondewConversion(state: GameState) = (1.0 + windwardLevel(state, WindwardStructure.MIST_CONDENSER) * 0.35) / 250.0
+
+	/** Recover at most 40% of the Glow routed away from the garden. */
+	fun routingRecovery(state: GameState) = windwardLevel(state, WindwardStructure.WIND_CHIMES) * 0.04
+
+	/** Star beacons boost gross production, which then feeds both routing and retained Glow. */
+	fun windwardProductionMultiplier(state: GameState) = 1.0 + windwardLevel(state, WindwardStructure.STAR_BEACON) * 0.08
+
+	/** Gross passive Glow before any routing, retained for cultivator readouts and active Firefly Wishes. */
+	fun glowRate(state: GameState) = bounded(production(state) * (1.0 - state.routing.fraction * (1.0 - routingRecovery(state))))
+
+	/** Moondew accumulates only from routed passive production, including capped offline growth. */
+	fun moondewRate(state: GameState) = bounded(production(state) * state.routing.fraction * moondewConversion(state))
+
+	fun routeMoondew(state: GameState, routing: MoondewRouting): GameState {
+		if (!windwardUnlocked(state) || state.routing == routing) {
+			return state
+		}
+
+		return state.copy(routing = routing)
+	}
+
+	fun windwardNextCost(state: GameState, structure: WindwardStructure): Double? {
+		val level = windwardLevel(state, structure)
+		if (level >= structure.maxLevel) {
+			return null
+		}
+
+		return structure.baseCost * structure.costGrowth.pow(level)
+	}
+
+	fun canBuildWindward(state: GameState, structure: WindwardStructure): Boolean {
+		val price = windwardNextCost(state, structure) ?: return false
+
+		return windwardUnlocked(state) && state.moondew >= price
+	}
+
+	/** Preview the impact of one new level at the current routing without spending Moondew. */
+	fun windwardGain(state: GameState, structure: WindwardStructure): IslandRateGain {
+		if (!windwardUnlocked(state) || windwardNextCost(state, structure) == null) {
+			return IslandRateGain(0.0, 0.0)
+		}
+
+		val levels = state.windwardLevels.toMutableList()
+		levels[structure.ordinal]++
+		val after = state.copy(windwardLevels = levels)
+
+		return IslandRateGain(
+			(glowRate(after) - glowRate(state)).coerceAtLeast(0.0),
+			(moondewRate(after) - moondewRate(state)).coerceAtLeast(0.0)
+		)
+	}
+
+	fun buildWindward(state: GameState, structure: WindwardStructure): GameState {
+		if (!canBuildWindward(state, structure)) {
+			return state
+		}
+
+		val cost = windwardNextCost(state, structure) ?: return state
+		val levels = state.windwardLevels.toMutableList()
+		levels[structure.ordinal]++
+
+		return rememberMilestones(state.copy(moondew = (state.moondew - cost).coerceAtLeast(0.0), windwardLevels = levels.toList()))
+	}
+
 	/** Extra production earned by growing supporting cultivators, including when the supported colony is purchased first. */
 	fun synergyMultiplier(state: GameState, cultivator: Cultivator) = when {
 		state.dawns == 0 -> 1.0
@@ -207,7 +299,7 @@ object Garden {
 		val dew = if ("morning-dew" in state.research) 1.3 else 1.0
 		val charts = if ("star-charts" in state.research) 1.5 else 1.0
 
-		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts * synergyMultiplier(state, cultivator) * constellationMultiplier(state, cultivator) * skyworkProductionMultiplier(state))
+		return bounded(state.count(cultivator) * cultivator.baseRate * colonyMultiplier(state.count(cultivator)) * researchMultiplier * seedMultiplier(state) * dew * charts * synergyMultiplier(state, cultivator) * constellationMultiplier(state, cultivator) * skyworkProductionMultiplier(state) * windwardProductionMultiplier(state))
 	}
 
 	fun production(state: GameState) = bounded(Cultivator.entries.sumOf { production(state, it) })
@@ -222,7 +314,7 @@ object Garden {
 		val counts = state.owned.toMutableList()
 		counts[cultivator.ordinal] += quantity.coerceAtMost(MAX_OWNED - count)
 
-		return (production(state.copy(owned = counts)) - production(state)).coerceAtLeast(0.0)
+		return (glowRate(state.copy(owned = counts)) - glowRate(state)).coerceAtLeast(0.0)
 	}
 
 	fun tapValue(state: GameState): Double {
@@ -250,7 +342,12 @@ object Garden {
 			return state
 		}
 
-		return earn(state, bounded(production(state) * seconds.coerceAtMost(86_400.0)))
+		val elapsed = seconds.coerceAtMost(86_400.0)
+		val retained = bounded(glowRate(state) * elapsed)
+		val condensed = bounded(moondewRate(state) * elapsed)
+		val advanced = earn(state, retained)
+
+		return rememberMilestones(advanced.copy(moondew = bounded(advanced.moondew + condensed)))
 	}
 
 	fun discovered(state: GameState, cultivator: Cultivator) = state.runGlow >= cultivator.discovery || state.count(cultivator) > 0
@@ -323,7 +420,7 @@ object Garden {
 		val creditedMillis = elapsed.coerceAtMost(limit)
 		val advanced = tick(state, creditedMillis / 1_000.0).copy(lastSeenMillis = now)
 
-		return OfflineGrowth(advanced, advanced.glow - state.glow, creditedMillis / 1_000L, elapsed > limit)
+		return OfflineGrowth(advanced, advanced.glow - state.glow, creditedMillis / 1_000L, elapsed > limit, advanced.moondew - state.moondew)
 	}
 
 	fun prestigeReward(state: GameState): Long {
@@ -356,6 +453,8 @@ object Garden {
 				dawnSeeds = state.dawnSeeds + reward,
 				dawns = (state.dawns + 1).coerceAtMost(Int.MAX_VALUE - 1),
 				skyworks = state.skyworks,
+				moondew = state.moondew,
+				windwardLevels = state.windwardLevels,
 				taps = state.taps,
 				lastSeenMillis = state.lastSeenMillis,
 				preferences = state.preferences
