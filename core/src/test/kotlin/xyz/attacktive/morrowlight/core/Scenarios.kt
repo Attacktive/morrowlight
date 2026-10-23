@@ -69,21 +69,28 @@ object Scenarios {
 			check(state.count(Cultivator.GLOWCAP) == MAX_OWNED)
 			check(Garden.quote(state, Cultivator.GLOWCAP, 1).quantity == 0)
 		},
+		"Garden synergies unlock only after the first restored dawn" to {
+			val firstGarden = GameState(owned = listOf(10, 1, 1, 5, 5, 1))
+			close(1.0, Garden.synergyMultiplier(firstGarden, Cultivator.LANTERN_LILY))
+			close(1.0, Garden.synergyMultiplier(firstGarden, Cultivator.FIREFLY_HAVEN))
+			close(1.0, Garden.synergyMultiplier(firstGarden, Cultivator.STARWELL))
+			close(1.2, Garden.synergyMultiplier(firstGarden.copy(dawns = 1), Cultivator.LANTERN_LILY))
+		},
 		"Supporting cultivators boost other colonies at their thresholds" to {
-			val before = GameState(owned = listOf(9, 10, 0, 0, 0, 0))
+			val before = GameState(owned = listOf(9, 10, 0, 0, 0, 0), dawns = 1)
 			val after = before.copy(owned = listOf(10, 10, 0, 0, 0, 0))
 			close(1.0, Garden.synergyMultiplier(before, Cultivator.LANTERN_LILY))
 			close(1.2, Garden.synergyMultiplier(after, Cultivator.LANTERN_LILY))
 			close(Garden.production(before, Cultivator.LANTERN_LILY) * 1.2, Garden.production(after, Cultivator.LANTERN_LILY))
 		},
 		"Synergies have a bounded ceiling" to {
-			val abundant = GameState(owned = listOf(1_000, 1, 1, 1_000, 1_000, 1))
+			val abundant = GameState(owned = listOf(1_000, 1, 1, 1_000, 1_000, 1), dawns = 1)
 			close(2.0, Garden.synergyMultiplier(abundant, Cultivator.LANTERN_LILY))
 			close(1.75, Garden.synergyMultiplier(abundant, Cultivator.FIREFLY_HAVEN))
 			close(2.0, Garden.synergyMultiplier(abundant, Cultivator.STARWELL))
 		},
 		"Investment previews include indirect synergy gains" to {
-			val before = GameState(owned = listOf(9, 10, 0, 0, 0, 0))
+			val before = GameState(owned = listOf(9, 10, 0, 0, 0, 0), dawns = 1)
 			val after = before.copy(owned = listOf(10, 10, 0, 0, 0, 0))
 			close(Garden.production(after) - Garden.production(before), Garden.productionGain(before, Cultivator.GLOWCAP, 1))
 			check(Garden.productionGain(before, Cultivator.GLOWCAP, 1) > Garden.production(after, Cultivator.GLOWCAP) - Garden.production(before, Cultivator.GLOWCAP))

@@ -110,6 +110,7 @@ private fun GardenApp(
 	var tab by rememberSaveable { mutableIntStateOf(0) }
 	var settings by rememberSaveable { mutableStateOf(false) }
 	var confirmDawn by rememberSaveable { mutableStateOf(false) }
+	var pendingConstellation by rememberSaveable { mutableStateOf<Constellation?>(null) }
 	val state = ui.garden
 	val haptics = LocalHapticFeedback.current
 	val touch: (Boolean) -> Unit = { repeating ->
@@ -175,7 +176,7 @@ private fun GardenApp(
 						when (tab) {
 							0 -> GardenHome(state, ui.active, touch)
 							1 -> CultivateScreen(state, onBuy, onResearch)
-							2 -> DawnScreen(state, { confirmDawn = true }, onAttune)
+							2 -> DawnScreen(state, { confirmDawn = true }) { pendingConstellation = it }
 						}
 					}
 				}
@@ -202,6 +203,22 @@ private fun GardenApp(
 				}, enabled = reward > 0) { Text("Restore the dawn") }
 			},
 			dismissButton = { TextButton(onClick = { confirmDawn = false }) { Text("Keep growing") } }
+		)
+	}
+
+	pendingConstellation?.let { option ->
+		AlertDialog(
+			onDismissRequest = { pendingConstellation = null },
+			icon = { Glyph(symbol = Symbol.SPARK, color = Lilac) },
+			title = { Text("Follow ${option.title}?", fontFamily = FontFamily.Serif) },
+			text = { Text("${option.description} This choice lasts until your next dawn.") },
+			confirmButton = {
+				TextButton(onClick = {
+					onAttune(option)
+					pendingConstellation = null
+				}) { Text("Follow this path") }
+			},
+			dismissButton = { TextButton(onClick = { pendingConstellation = null }) { Text("Not yet") } }
 		)
 	}
 
@@ -427,7 +444,9 @@ private fun CultivatorCard(state: GameState, plant: Cultivator, amount: BuyAmoun
 		}
 
 		Text(plant.description, color = Muted, style = MaterialTheme.typography.bodyMedium)
-		synergyHint(plant)?.let { Text(it, color = Muted, fontSize = 12.sp) }
+		if (state.dawns > 0) {
+			synergyHint(plant)?.let { Text(it, color = Muted, fontSize = 12.sp) }
+		}
 
 		val synergy = Garden.synergyMultiplier(state, plant)
 		if (synergy > 1.0) {

@@ -88,7 +88,7 @@ object Almanac {
 		Milestone("stars", "The stars came home", "Build a Starwell.") { it.count(Cultivator.STARWELL) > 0 },
 		Milestone("dawn", "Begin again, brighter", "Restore your first dawn.") { it.dawns >= 1 },
 		Milestone("ten-seeds", "Keeper of mornings", "Collect 10 permanent Dawn Seeds.") { it.dawnSeeds >= 10 },
-		Milestone("network", "We grow together", "Grow ten Glowcaps alongside a Lantern lily.") { it.count(Cultivator.GLOWCAP) >= 10 && it.count(Cultivator.LANTERN_LILY) > 0 },
+		Milestone("network", "We grow together", "Grow ten Glowcaps alongside a Lantern lily after your first dawn.") { it.dawns > 0 && it.count(Cultivator.GLOWCAP) >= 10 && it.count(Cultivator.LANTERN_LILY) > 0 },
 		Milestone("constellation", "Written in starlight", "Follow your first constellation.") { it.constellation != null },
 		Milestone("billion", "A sky of your own", "Gather one billion lifetime Glow.") { it.lifetimeGlow >= 1e9 }
 	)
@@ -109,10 +109,11 @@ object Garden {
 	fun seedMultiplier(state: GameState) = 1.0 + state.dawnSeeds * 0.15
 
 	/** Extra production earned by growing supporting cultivators, including when the supported colony is purchased first. */
-	fun synergyMultiplier(state: GameState, cultivator: Cultivator) = when (cultivator) {
-		Cultivator.LANTERN_LILY -> 1.0 + (state.count(Cultivator.GLOWCAP) / 10).coerceAtMost(5) * 0.2
-		Cultivator.FIREFLY_HAVEN -> 1.0 + (state.count(Cultivator.MOONWILLOW) / 5).coerceAtMost(5) * 0.15
-		Cultivator.STARWELL -> 1.0 + (state.count(Cultivator.CLOUD_LOOM) / 5).coerceAtMost(10) * 0.1
+	fun synergyMultiplier(state: GameState, cultivator: Cultivator) = when {
+		state.dawns == 0 -> 1.0
+		cultivator == Cultivator.LANTERN_LILY -> 1.0 + (state.count(Cultivator.GLOWCAP) / 10).coerceAtMost(5) * 0.2
+		cultivator == Cultivator.FIREFLY_HAVEN -> 1.0 + (state.count(Cultivator.MOONWILLOW) / 5).coerceAtMost(5) * 0.15
+		cultivator == Cultivator.STARWELL -> 1.0 + (state.count(Cultivator.CLOUD_LOOM) / 5).coerceAtMost(10) * 0.1
 		else -> 1.0
 	}
 
