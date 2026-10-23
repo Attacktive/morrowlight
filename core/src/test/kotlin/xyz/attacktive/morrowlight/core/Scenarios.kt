@@ -15,6 +15,7 @@ object Scenarios {
 	private fun funded(amount: Double = 10_000.0) = Garden.earn(GameState(), amount)
 	private fun producer(count: Int = 1) = GameState(owned = listOf(count, 0, 0, 0, 0, 0))
 	private fun windwardProducer() = funded(300_000_000.0).copy(dawns = 1, skyworks = Skywork.entries.map { it.cost }, owned = producer(10).owned)
+	private fun skybridgeProducer() = windwardProducer().copy(moondew = 3_000_000.0, owned = listOf(10, 5, 2, 1, 1, 1))
 	private inline fun rejected(block: () -> Unit) {
 		var failed = false
 
@@ -425,6 +426,163 @@ object Scenarios {
 			close(1.8, Garden.windwardProductionMultiplier(state))
 			check("windward-threefold" in state.milestones)
 		},
+		"Skybridge remains locked until Windward opens and Moondew is affordable" to {
+			val before = funded(300_000_000.0).copy(dawns = 1, moondew = 30_000.0)
+			check(!Garden.canBuildSkybridge(before))
+			check(Garden.buildSkybridge(before) == before)
+			check(Garden.connectSkybridge(before, Cultivator.GLOWCAP) == before)
+			val ready = skybridgeProducer().copy(moondew = 29_999.0)
+			check(!Garden.canBuildSkybridge(ready))
+			check(Garden.buildSkybridge(ready) == ready)
+			close(30_000.0, Garden.skybridgeNextCost(ready)!!)
+			check(Garden.canBuildSkybridge(ready.copy(moondew = 30_000.0)))
+		},
+		"Raising a Skybridge spends Moondew once and records the milestone" to {
+			val ready = skybridgeProducer().copy(moondew = 30_000.0)
+			val built = Garden.buildSkybridge(ready)
+			check(built.skybridgeLevel == 1)
+			close(0.0, built.moondew)
+			check(built.glow == ready.glow && built.runGlow == ready.runGlow && built.lifetimeGlow == ready.lifetimeGlow)
+			check("skybridge-raised" in built.milestones)
+			check(Garden.buildSkybridge(built) == built)
+		},
+		"Only owned colonies may connect and only one link can exist" to {
+			val initial = Garden.buildSkybridge(skybridgeProducer())
+			val glowcap = Garden.connectSkybridge(initial, Cultivator.GLOWCAP)
+			check(glowcap.skybridgeCultivator == Cultivator.GLOWCAP)
+			check("skybridge-linked" in glowcap.milestones)
+			check(Garden.connectSkybridge(glowcap, Cultivator.GLOWCAP) == glowcap)
+			val starwell = Garden.connectSkybridge(glowcap, Cultivator.STARWELL)
+			check(starwell.skybridgeCultivator == Cultivator.STARWELL)
+			check(Garden.skybridgeActive(starwell))
+			val notOwned = starwell.copy(owned = listOf(10, 5, 2, 1, 1, 0))
+			check(!Garden.skybridgeActive(notOwned))
+			check(Garden.connectSkybridge(notOwned, Cultivator.STARWELL) == notOwned)
+			check(Garden.connectSkybridge(notOwned, Cultivator.GLOWCAP).skybridgeCultivator == Cultivator.GLOWCAP)
+			val detached = Garden.connectSkybridge(starwell, null)
+			check(detached.skybridgeCultivator == null)
+			check(!Garden.skybridgeActive(detached))
+		},
+		"Skybridge boosts only its selected mainland colony" to {
+			val before = skybridgeProducer()
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(before), Cultivator.MOONWILLOW)
+			close(Garden.production(before, Cultivator.MOONWILLOW) * 1.15, Garden.production(linked, Cultivator.MOONWILLOW))
+			for (other in Cultivator.entries.filter { it != Cultivator.MOONWILLOW }) {
+				close(Garden.production(before, other), Garden.production(linked, other))
+			}
+
+			close(Garden.production(before) + Garden.production(before, Cultivator.MOONWILLOW) * 0.15, Garden.production(linked))
+		},
+		"Skybridge reroutes thirty percent of boosted colony production before global routing" to {
+			val before = skybridgeProducer()
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(before), Cultivator.STARWELL)
+			val bridge = Garden.production(linked, Cultivator.STARWELL) * SKYBRIDGE_DIVERSION
+			close(bridge, Garden.skybridgeRoutedGlow(linked))
+			close(bridge, Garden.totalRoutedGlow(linked))
+			close(Garden.production(linked) - bridge, Garden.glowRate(linked))
+			close(bridge * Garden.moondewConversion(linked), Garden.moondewRate(linked))
+			check(Garden.moondewRate(linked) > 0.0 && linked.routing == MoondewRouting.NONE)
+			close(0.0, Garden.skybridgeRoutedGlow(before))
+			close(0.0, Garden.moondewRate(before))
+		},
+		"Global routing never diverts the same bridge Glow twice" to {
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(skybridgeProducer()), Cultivator.CLOUD_LOOM)
+			for (routing in MoondewRouting.entries) {
+				val state = Garden.routeMoondew(linked, routing)
+				val bridge = Garden.skybridgeRoutedGlow(state)
+				val total = bridge + (Garden.production(state) - bridge) * routing.fraction
+				close(total, Garden.totalRoutedGlow(state))
+				close(Garden.production(state) - total, Garden.glowRate(state))
+				close(total * Garden.moondewConversion(state), Garden.moondewRate(state))
+			}
+		},
+		"Wind chimes recover Skybridge transfers without reducing Moondew" to {
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(skybridgeProducer()), Cultivator.GLOWCAP)
+			val chimes = Garden.buildWindward(linked, WindwardStructure.WIND_CHIMES)
+			close(Garden.moondewRate(linked), Garden.moondewRate(chimes))
+			close(Garden.totalRoutedGlow(chimes) * 0.04, Garden.glowRate(chimes) - Garden.glowRate(linked))
+			val condensed = Garden.buildWindward(chimes, WindwardStructure.MIST_CONDENSER)
+			close(Garden.moondewRate(chimes) * 1.35, Garden.moondewRate(condensed))
+		},
+		"Skybridge selection previews include signed opportunity costs and agree with actual changes" to {
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(skybridgeProducer()), Cultivator.STARWELL)
+			for (candidate in Cultivator.entries) {
+				val gain = Garden.skybridgeSelectionGain(linked, candidate)
+				val changed = Garden.connectSkybridge(linked, candidate)
+				close(Garden.glowRate(changed) - Garden.glowRate(linked), gain.glowPerSecond)
+				close(Garden.moondewRate(changed) - Garden.moondewRate(linked), gain.moondewPerSecond)
+			}
+
+			val removed = Garden.skybridgeSelectionGain(linked, null)
+			check(removed.glowPerSecond > 0.0 && removed.moondewPerSecond < 0.0)
+			val unowned = linked.copy(owned = producer(10).owned)
+			close(0.0, Garden.skybridgeSelectionGain(unowned, Cultivator.CLOUD_LOOM).moondewPerSecond)
+		},
+		"Skybridge levels improve the linked colony and previews track both rates" to {
+			var state = Garden.connectSkybridge(Garden.buildSkybridge(skybridgeProducer()), Cultivator.FIREFLY_HAVEN)
+			for (level in 2..MAX_SKYBRIDGE_LEVEL) {
+				val preview = Garden.skybridgeUpgradeGain(state)
+				val grown = Garden.buildSkybridge(state)
+				check(grown.skybridgeLevel == level)
+				close(Garden.glowRate(grown) - Garden.glowRate(state), preview.glowPerSecond)
+				close(Garden.moondewRate(grown) - Garden.moondewRate(state), preview.moondewPerSecond)
+				check(preview.glowPerSecond > 0.0 && preview.moondewPerSecond > 0.0)
+				state = grown
+			}
+
+			check(Garden.skybridgeNextCost(state) == null)
+			check(!Garden.canBuildSkybridge(state))
+			check(Garden.buildSkybridge(state) == state)
+			close(1.75, Garden.skybridgeProductionMultiplier(state))
+		},
+		"Skybridge survives dawn but waits for its colony to regrow" to {
+			val built = Garden.connectSkybridge(Garden.buildSkybridge(skybridgeProducer()), Cultivator.GLOWCAP)
+			val before = Garden.routeMoondew(built, MoondewRouting.THREE_QUARTERS)
+			val after = Garden.prestige(before)
+			check(after.skybridgeLevel == built.skybridgeLevel)
+			check(after.skybridgeCultivator == Cultivator.GLOWCAP)
+			check(after.routing == MoondewRouting.NONE)
+			check(!Garden.skybridgeActive(after))
+			close(0.0, Garden.totalRoutedGlow(after))
+			close(0.0, Garden.moondewRate(after))
+			val regrown = Garden.buy(after.copy(glow = 100.0, runGlow = 100.0), Cultivator.GLOWCAP, 1)
+			check(Garden.skybridgeActive(regrown))
+			check(Garden.skybridgeRoutedGlow(regrown) > 0.0)
+			check(Garden.moondewRate(regrown) > 0.0)
+		},
+		"Skybridge foreground and offline growth stay rate-consistent" to {
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(skybridgeProducer()), Cultivator.LANTERN_LILY)
+			val ready = Garden.routeMoondew(linked.copy(glow = 0.0, lastSeenMillis = 1_000L), MoondewRouting.HALF)
+			val rate = Garden.glowRate(ready)
+			val dewRate = Garden.moondewRate(ready)
+			val ticked = Garden.tick(ready, 30.0)
+			close(rate * 30.0, ticked.glow)
+			close(dewRate * 30.0, ticked.moondew - ready.moondew)
+			val offline = Garden.offline(ready, 61_000L)
+			close(rate * 60.0, offline.earned)
+			close(dewRate * 60.0, offline.moondewEarned)
+			close(0.0, Garden.offline(offline.state, 61_000L).moondewEarned)
+		},
+		"Skybridge upgrades and connections validate their save invariants" to {
+			val ready = skybridgeProducer()
+			val invalid = listOf(
+				GameState(skybridgeLevel = 1),
+				GameState(skybridgeCultivator = Cultivator.GLOWCAP),
+				ready.copy(skybridgeLevel = -1),
+				ready.copy(skybridgeLevel = MAX_SKYBRIDGE_LEVEL + 1),
+				ready.copy(skybridgeCultivator = Cultivator.GLOWCAP),
+				ready.copy(skybridgeLevel = 0, skybridgeCultivator = Cultivator.GLOWCAP)
+			)
+
+			for (state in invalid) {
+				rejected { SaveCodec.encode(SavedGarden(1, state)) }
+			}
+
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(ready), Cultivator.GLOWCAP)
+			val saved = SavedGarden(123, linked)
+			check(SaveCodec.decode(SaveCodec.encode(saved)) == saved)
+			check(SaveCodec.decode(SaveCodec.encode(saved)).state.skybridgeCultivator == Cultivator.GLOWCAP)
+		},
 		"Cultivator investment payback uses retained production during routing" to {
 			val state = Garden.routeMoondew(windwardProducer().copy(glow = 100_000.0), MoondewRouting.HALF)
 			val gain = Garden.productionGain(state, Cultivator.GLOWCAP, 1)
@@ -473,7 +631,7 @@ object Scenarios {
 				rejected { SaveCodec.encode(SavedGarden(1, state)) }
 			}
 		},
-		"Version 4 saves preserve routing, structures, and Moondew" to {
+		"Version 5 saves preserve Skybridge links, routing, structures, and Moondew" to {
 			val state = Garden.routeMoondew(windwardProducer().copy(moondew = 2_000_000.0), MoondewRouting.THREE_QUARTERS)
 			val planted = Garden.buildWindward(Garden.buildWindward(state, WindwardStructure.MIST_CONDENSER), WindwardStructure.WIND_CHIMES)
 			val save = SavedGarden(92, planted)
@@ -518,12 +676,17 @@ object Scenarios {
 				rejected { SaveCodec.encode(SavedGarden(1, GameState(glow = number))) }
 			}
 		},
-		"Version 1, 2 and 3 checkpoints migrate into Windward without losing progress" to {
+		"Version 1 through 4 checkpoints migrate into Skybridges without losing progress" to {
 			val saved = SavedGarden(9, funded(12_345.0).copy(dawns = 2, dawnSeeds = 3))
 			val encoded = SaveCodec.encode(saved)
 			val payload = encoded.copyOfRange(0, encoded.size - 32)
+			val skybridgeTailSize = 4 + 2
+			val version4Payload = payload.copyOfRange(0, payload.size - skybridgeTailSize)
+			version4Payload[7] = 4
+			val v4 = version4Payload + MessageDigest.getInstance("SHA-256").digest(version4Payload)
+			check(SaveCodec.decode(v4) == saved)
 			val windwardTailSize = 8 + 2 + MoondewRouting.NONE.name.length + WindwardStructure.entries.size * 4
-			val previous = payload.copyOfRange(0, payload.size - windwardTailSize)
+			val previous = version4Payload.copyOfRange(0, version4Payload.size - windwardTailSize)
 			previous[7] = 3
 			val v3 = previous + MessageDigest.getInstance("SHA-256").digest(previous)
 			check(SaveCodec.decode(v3) == saved)
@@ -537,9 +700,14 @@ object Scenarios {
 			check(SaveCodec.decode(v1) == saved)
 			val attuned = saved.copy(state = saved.state.copy(constellation = Constellation.UNDERSTORY))
 			val current = SaveCodec.encode(attuned)
-			val attunedPayload = current.copyOfRange(0, current.size - 32 - windwardTailSize - Skywork.entries.size * 8)
+			val attunedPayload = current.copyOfRange(0, current.size - 32 - skybridgeTailSize - windwardTailSize - Skywork.entries.size * 8)
 			attunedPayload[7] = 2
 			check(SaveCodec.decode(attunedPayload + MessageDigest.getInstance("SHA-256").digest(attunedPayload)) == attuned)
+			val oldWindward = SavedGarden(10, Garden.routeMoondew(windwardProducer().copy(moondew = 80_000.0), MoondewRouting.QUARTER))
+			val oldBytes = SaveCodec.encode(oldWindward)
+			val oldPayload = oldBytes.copyOfRange(0, oldBytes.size - 32 - skybridgeTailSize)
+			oldPayload[7] = 4
+			check(SaveCodec.decode(oldPayload + MessageDigest.getInstance("SHA-256").digest(oldPayload)) == oldWindward)
 		},
 		"Unrestored gardens cannot save constellation selections" to {
 			rejected { SaveCodec.encode(SavedGarden(1, GameState(constellation = Constellation.UNDERSTORY))) }
@@ -547,7 +715,7 @@ object Scenarios {
 		"Unknown save schemas are rejected, not reset" to {
 			val bytes = SaveCodec.encode(SavedGarden(1, GameState()))
 			val payload = bytes.copyOfRange(0, bytes.size - 32)
-			payload[7] = 5
+			payload[7] = 6
 			try {
 				SaveCodec.decode(payload + MessageDigest.getInstance("SHA-256").digest(payload))
 				error("Expected version rejection")
@@ -653,6 +821,32 @@ object Scenarios {
 			check(progressed == WindwardArt.scene(restored))
 			check(progressed.any { it is GardenMark.Shape && it.color == 0xFF7AA5A5 })
 		},
+		"Skybridge artwork shows upgrades and dormant versus live connections" to {
+			val ready = skybridgeProducer()
+			val built = Garden.buildSkybridge(ready)
+			val active = Garden.connectSkybridge(built, Cultivator.GLOWCAP)
+			val dormant = active.copy(owned = List(Cultivator.entries.size) { 0 })
+			check(WindwardArt.scene(ready) != WindwardArt.scene(built))
+			check(WindwardArt.scene(built) != WindwardArt.scene(active))
+			check(WindwardArt.scene(built) == WindwardArt.scene(dormant))
+			check(WindwardArt.scene(active) == WindwardArt.scene(active))
+			check(WindwardArt.scene(active) == WindwardArt.scene(active.copy(moondew = 300.0, routing = MoondewRouting.THREE_QUARTERS)))
+		},
+		"Skybridge save decoding rejects corrupted level and unknown colony name" to {
+			val linked = Garden.connectSkybridge(Garden.buildSkybridge(skybridgeProducer()), Cultivator.GLOWCAP)
+			val save = SaveCodec.encode(SavedGarden(98, linked))
+			val body = save.copyOfRange(0, save.size - 32)
+			val linkNameSize = Cultivator.GLOWCAP.name.length
+			val invalidName = body.copyOf()
+			invalidName[invalidName.size - linkNameSize] = 'X'.code.toByte()
+			rejected { SaveCodec.decode(invalidName + MessageDigest.getInstance("SHA-256").digest(invalidName)) }
+			val invalidLevel = body.copyOf()
+			val levelOffset = invalidLevel.size - linkNameSize - 2 - 4
+			repeat(4) { index -> invalidLevel[levelOffset + index] = 0xff.toByte() }
+			rejected { SaveCodec.decode(invalidLevel + MessageDigest.getInstance("SHA-256").digest(invalidLevel)) }
+			val truncated = body.copyOf(body.size - 1)
+			rejected { SaveCodec.decode(truncated + MessageDigest.getInstance("SHA-256").digest(truncated)) }
+		},
 		"Garden illustration is deterministic across recompositions" to {
 			val state = GameState(owned = listOf(18, 12, 6, 3, 2, 1))
 			check(GardenArt.scene(state) == GardenArt.scene(state))
@@ -662,7 +856,7 @@ object Scenarios {
 			var state = GameState()
 
 			repeat(10_000) {
-				state = when (random.nextInt(10)) {
+				state = when (random.nextInt(12)) {
 					0 -> Garden.tap(state)
 					1 -> Garden.tick(state, random.nextDouble(0.0, 1_000.0))
 					2 -> Garden.buy(state, Cultivator.entries[random.nextInt(6)], listOf(1, 10, 1_000)[random.nextInt(3)])
@@ -672,6 +866,8 @@ object Scenarios {
 					6 -> Garden.contributeSkywork(state, Skywork.entries[random.nextInt(Skywork.entries.size)], Contribution.entries[random.nextInt(Contribution.entries.size)])
 					7 -> Garden.routeMoondew(state, MoondewRouting.entries[random.nextInt(MoondewRouting.entries.size)])
 					8 -> Garden.buildWindward(state, WindwardStructure.entries[random.nextInt(WindwardStructure.entries.size)])
+					9 -> Garden.buildSkybridge(state)
+					10 -> Garden.connectSkybridge(state, if (random.nextBoolean()) null else Cultivator.entries[random.nextInt(Cultivator.entries.size)])
 					else -> SaveCodec.decode(SaveCodec.encode(SavedGarden(1, state))).state
 				}
 
